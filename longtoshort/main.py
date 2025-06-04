@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import yt_dlp
 from openai import OpenAI
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, TextClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, TextClip, ColorClip
 import json
 import re
 import cv2
@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 import io
 from moviepy.config import change_settings
+import textwrap
 
 # ImageMagick yapılandırması
 IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
@@ -45,7 +46,7 @@ def download_video(url):
     output_template = f'{video_id}.mp4'
     
     ydl_opts = {
-        'format': 'best[ext=mp4]',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # En yüksek kalite
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
@@ -139,15 +140,9 @@ def analyze_content(text):
             "reason": "Bu kısımda ilgi çekici bir an var",
             "title": "İlgi çekici başlık",
             "speaker_detected": true,
-            "speaker_time": 15
-        }},
-        {{
-            "start_time": 45,
-            "end_time": 75,
-            "reason": "Bu kısımda komik bir sahne var",
-            "title": "Komik başlık",
-            "speaker_detected": true,
-            "speaker_time": 60
+            "speaker_time": 15,
+            "context": "Bu kısımda konuşmacı şu konuyu anlatıyor...",
+            "sentence_start": 0
         }}
     ]
 
@@ -156,9 +151,12 @@ def analyze_content(text):
     2. Her kısım için start_time ve end_time saniye cinsinden olmalı
     3. Her kısım 15-60 saniye arası olmalı
     4. En fazla 5 viral kısım belirle
-    5. Her kısım için ilgi çekici bir başlık ekle
+    5. Her kısım için içerikle ilgili, ilgi çekici bir başlık ekle
     6. Konuşan kişi tespit edildiyse speaker_detected true olmalı ve speaker_time belirtilmeli
-    7. Başka hiçbir açıklama ekleme, sadece JSON döndür
+    7. Her kısım için context ekle (o kısımda ne anlatıldığı)
+    8. sentence_start ekle (cümlenin başladığı zaman)
+    9. Başlıklar içerikle ilgili ve ilgi çekici olmalı
+    10. Başka hiçbir açıklama ekleme, sadece JSON döndür
 
     Altyazı:
     {text}
@@ -207,7 +205,8 @@ def create_shorts(video_path, viral_parts):
         
         for i, part in enumerate(viral_parts):
             try:
-                start_time = part['start_time']
+                # Cümlenin başladığı zamandan başla
+                start_time = part.get('sentence_start', part['start_time'])
                 end_time = part['end_time']
                 
                 # Kısa video klibi oluştur
@@ -240,22 +239,76 @@ def create_shorts(video_path, viral_parts):
                             clip = clip.set_position(('center', 'center'))
                 
                 # Videoyu dikey formata dönüştür
-                clip = clip.resize(width=target_w)
+                # Önce videoyu hedef yüksekliğe göre yeniden boyutlandır
+                clip = clip.resize(height=target_h)
+                
+                # Eğer genişlik hedef genişlikten büyükse, kırp
+                if clip.w > target_w:
+                    # Merkezi hesapla
+                    x_center = clip.w / 2
+                    # Kırpma koordinatlarını hesapla
+                    x1 = int(x_center - target_w/2)
+                    x2 = int(x_center + target_w/2)
+                    clip = clip.crop(x1=x1, y1=0, x2=x2, y2=target_h)
+                # Eğer genişlik hedef genişlikten küçükse, siyah arka plan ekle
+                elif clip.w < target_w:
+                    # Siyah arka plan oluştur
+                    background = ColorClip(size=(target_w, target_h), color=(0, 0, 0))
+                    background = background.set_duration(clip.duration)
+                    
+                    # Videoyu merkeze yerleştir
+                    clip = clip.set_position(('center', 'center'))
+                    
+                    # Arka plan ve videoyu birleştir
+                    clip = CompositeVideoClip([background, clip])
                 
                 # Başlık ekle
                 title = part.get('title', '')
                 if title:
                     try:
-                        txt_clip = TextClip(title, fontsize=70, color='white', font='Arial-Bold')
-                        txt_clip = txt_clip.set_position(('center', 50)).set_duration(clip.duration)
-                        clip = CompositeVideoClip([clip, txt_clip])
+                        # Başlığı satırlara böl
+                        wrapped_title = textwrap.fill(title, width=25)
+                        lines = wrapped_title.count('\n') + 1
+                        
+                        # Başlık için arka plan oluştur
+                        bg_height = 150 if lines > 1 else 100
+                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 180))
+                        title_bg = title_bg.set_duration(clip.duration)
+                        
+                        # Başlık metnini oluştur
+                        txt_clip = TextClip(
+                            wrapped_title,
+                            fontsize=60,
+                            color='white',
+                            font='Arial-Bold',
+                            stroke_color='black',
+                            stroke_width=2,
+                            method='label',
+                            align='center'
+                        )
+                        
+                        # Başlık pozisyonunu ayarla
+                        if lines > 1:
+                            txt_clip = txt_clip.set_position(('center', 30))
+                        else:
+                            txt_clip = txt_clip.set_position(('center', 50))
+                        
+                        txt_clip = txt_clip.set_duration(clip.duration)
+                        
+                        # Arka plan ve başlığı birleştir
+                        title_composite = CompositeVideoClip([title_bg, txt_clip])
+                        title_composite = title_composite.set_position(('center', 0))
+                        
+                        # Tüm klipleri birleştir
+                        clip = CompositeVideoClip([clip, title_composite])
+                        
                     except Exception as e:
                         print(f"Başlık eklenirken hata oluştu: {str(e)}")
                         print("Başlık olmadan devam ediliyor...")
                 
                 # Klibi kaydet
                 output_path = f'{video_id}_short_{i+1}.mp4'
-                clip.write_videofile(output_path, codec='libx264')
+                clip.write_videofile(output_path, codec='libx264', bitrate='8000k')
                 
             except Exception as e:
                 print(f"Kısa video {i+1} oluşturulurken hata: {str(e)}")
