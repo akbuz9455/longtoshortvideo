@@ -2,8 +2,18 @@ import os
 from dotenv import load_dotenv
 import yt_dlp
 from openai import OpenAI
-from moviepy.editor import VideoFileClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, TextClip
 import json
+import re
+import cv2
+import numpy as np
+from PIL import Image
+import io
+from moviepy.config import change_settings
+
+# ImageMagick yapılandırması
+IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
+change_settings({"IMAGEMAGICK_BINARY": IMAGEMAGICK_BINARY})
 
 # .env dosyasından API anahtarlarını yükle
 load_dotenv()
@@ -12,18 +22,38 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 OPENAI_MODEL = os.getenv('OPENAI_MODEL')
 
+def extract_video_id(url):
+    """YouTube URL'sinden video ID'sini çıkarır"""
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?]+)',
+        r'youtube\.com\/embed\/([^&\n?]+)',
+        r'youtube\.com\/v\/([^&\n?]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def download_video(url):
     """YouTube videosunu indirir"""
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise ValueError("Geçersiz YouTube URL'si")
+        
+    output_template = f'{video_id}.mp4'
+    
     ydl_opts = {
         'format': 'best[ext=mp4]',
-        'outtmpl': 'video.mp4',
+        'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
         'force_generic_extractor': False,
-        'writesubtitles': True,  # Altyazıları indir
-        'writeautomaticsub': True,  # Otomatik altyazıları da indir
-        'subtitleslangs': ['tr', 'en'],  # Türkçe ve İngilizce altyazıları indir
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': ['tr', 'en'],
         'postprocessors': [{
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
@@ -32,13 +62,13 @@ def download_video(url):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            return 'video.mp4', info
+            return output_template, info
     except Exception as e:
         print(f"Video indirme hatası: {str(e)}")
         print("Alternatif indirme yöntemi deneniyor...")
         ydl_opts = {
             'format': 'best',
-            'outtmpl': 'video.mp4',
+            'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
             'writesubtitles': True,
@@ -47,7 +77,7 @@ def download_video(url):
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            return 'video.mp4', info
+            return output_template, info
 
 def extract_subtitles(info):
     """Video bilgilerinden altyazıları çıkarır"""
@@ -106,12 +136,18 @@ def analyze_content(text):
         {{
             "start_time": 0,
             "end_time": 30,
-            "reason": "Bu kısımda ilgi çekici bir an var"
+            "reason": "Bu kısımda ilgi çekici bir an var",
+            "title": "İlgi çekici başlık",
+            "speaker_detected": true,
+            "speaker_time": 15
         }},
         {{
             "start_time": 45,
             "end_time": 75,
-            "reason": "Bu kısımda komik bir sahne var"
+            "reason": "Bu kısımda komik bir sahne var",
+            "title": "Komik başlık",
+            "speaker_detected": true,
+            "speaker_time": 60
         }}
     ]
 
@@ -120,7 +156,9 @@ def analyze_content(text):
     2. Her kısım için start_time ve end_time saniye cinsinden olmalı
     3. Her kısım 15-60 saniye arası olmalı
     4. En fazla 5 viral kısım belirle
-    5. Başka hiçbir açıklama ekleme, sadece JSON döndür
+    5. Her kısım için ilgi çekici bir başlık ekle
+    6. Konuşan kişi tespit edildiyse speaker_detected true olmalı ve speaker_time belirtilmeli
+    7. Başka hiçbir açıklama ekleme, sadece JSON döndür
 
     Altyazı:
     {text}
@@ -135,46 +173,99 @@ def analyze_content(text):
         )
         
         content = response.choices[0].message.content.strip()
-        print("ChatGPT yanıtı:", content)  # Debug için yanıtı yazdır
-        
         return json.loads(content)
-    except json.JSONDecodeError as e:
-        print(f"JSON ayrıştırma hatası: {str(e)}")
-        print("Alınan yanıt:", content)
-        raise
     except Exception as e:
         print(f"Beklenmeyen hata: {str(e)}")
         raise
 
+def get_video_thumbnail(video_path, time):
+    """Belirli bir zamandaki video karesini alır ve küçültür"""
+    video = cv2.VideoCapture(video_path)
+    video.set(cv2.CAP_PROP_POS_MSEC, time * 1000)
+    success, frame = video.read()
+    video.release()
+    
+    if success:
+        # BGR'den RGB'ye dönüştür
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # PIL Image'e dönüştür
+        image = Image.fromarray(frame)
+        # 124x124 boyutuna küçült
+        image = image.resize((124, 124), Image.Resampling.LANCZOS)
+        return image
+    return None
+
 def create_shorts(video_path, viral_parts):
     """Viral kısımlardan Shorts videoları oluşturur"""
-    video = VideoFileClip(video_path)
-    
-    for i, part in enumerate(viral_parts):
-        start_time = part['start_time']
-        end_time = part['end_time']
+    try:
+        video = VideoFileClip(video_path)
+        video_id = os.path.splitext(os.path.basename(video_path))[0]
         
-        # Kısa video klibi oluştur
-        clip = video.subclip(start_time, end_time)
+        # Video boyutlarını al
+        w, h = video.size
+        target_w, target_h = 1080, 1920  # Shorts için hedef boyutlar
         
-        # Dikey formata dönüştür (9:16 aspect ratio)
-        w, h = clip.size
-        new_h = int(w * (16/9))
-        clip = clip.resize(height=new_h)
+        for i, part in enumerate(viral_parts):
+            try:
+                start_time = part['start_time']
+                end_time = part['end_time']
+                
+                # Kısa video klibi oluştur
+                clip = video.subclip(start_time, end_time)
+                
+                # Konuşan kişi tespit edildiyse o kısma zoom yap
+                if part.get('speaker_detected', False):
+                    speaker_time = part['speaker_time']
+                    # Konuşan kişinin olduğu kareyi al
+                    frame = get_video_thumbnail(video_path, speaker_time)
+                    if frame is not None:
+                        # Frame'i numpy array'e dönüştür
+                        frame_np = np.array(frame)
+                        # Yüz tespiti yap
+                        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+                        gray = cv2.cvtColor(frame_np, cv2.COLOR_RGB2GRAY)
+                        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+                        
+                        if len(faces) > 0:
+                            # En büyük yüzü al
+                            face = max(faces, key=lambda x: x[2] * x[3])
+                            x, y, w, h = face
+                            # Yüzü merkeze alacak şekilde zoom yap
+                            center_x = x + w/2
+                            center_y = y + h/2
+                            zoom_factor = 1.5
+                            
+                            # Zoom uygula
+                            clip = clip.resize(lambda t: zoom_factor)
+                            clip = clip.set_position(('center', 'center'))
+                
+                # Videoyu dikey formata dönüştür
+                clip = clip.resize(width=target_w)
+                
+                # Başlık ekle
+                title = part.get('title', '')
+                if title:
+                    try:
+                        txt_clip = TextClip(title, fontsize=70, color='white', font='Arial-Bold')
+                        txt_clip = txt_clip.set_position(('center', 50)).set_duration(clip.duration)
+                        clip = CompositeVideoClip([clip, txt_clip])
+                    except Exception as e:
+                        print(f"Başlık eklenirken hata oluştu: {str(e)}")
+                        print("Başlık olmadan devam ediliyor...")
+                
+                # Klibi kaydet
+                output_path = f'{video_id}_short_{i+1}.mp4'
+                clip.write_videofile(output_path, codec='libx264')
+                
+            except Exception as e:
+                print(f"Kısa video {i+1} oluşturulurken hata: {str(e)}")
+                continue
         
-        # Merkeze hizala
-        clip = clip.set_position(('center', 'center'))
+        video.close()
         
-        # Arka plan ekle
-        background = VideoFileClip(video_path).subclip(start_time, end_time)
-        background = background.resize(height=new_h)
-        background = background.set_position(('center', 'center'))
-        
-        # Klibi kaydet
-        output_path = f'short_{i+1}.mp4'
-        clip.write_videofile(output_path, codec='libx264')
-        
-    video.close()
+    except Exception as e:
+        print(f"Video işlenirken hata oluştu: {str(e)}")
+        raise
 
 def main():
     # YouTube URL'sini al
