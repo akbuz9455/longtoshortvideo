@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import yt_dlp
 from openai import OpenAI
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, TextClip, ColorClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, TextClip, ColorClip, concatenate_videoclips
 import json
 import re
 import cv2
@@ -343,6 +343,10 @@ def create_shorts(video_path, viral_parts):
         video = VideoFileClip(video_path)
         video_id = os.path.splitext(os.path.basename(video_path))[0]
         
+        # Arka plan videosunu yükle
+        bg_video = VideoFileClip("bg.mp4")
+        bg_duration = bg_video.duration
+        
         # Video boyutlarını al
         w, h = video.size
         target_w, target_h = 1080, 1920  # Shorts için hedef boyutlar
@@ -352,59 +356,52 @@ def create_shorts(video_path, viral_parts):
                 # Cümlenin başladığı zamandan başla
                 start_time = part.get('sentence_start', part['start_time'])
                 end_time = part['end_time']
+                clip_duration = end_time - start_time
                 
                 # Kısa video klibi oluştur
                 clip = video.subclip(start_time, end_time)
                 
-                # Konuşan kişi tespit edildiyse o kısma zoom yap
-                if part.get('speaker_detected', False):
-                    speaker_time = part['speaker_time']
-                    # Konuşan kişinin olduğu kareyi al
-                    frame = get_video_thumbnail(video_path, speaker_time)
-                    if frame is not None:
-                        # Frame'i numpy array'e dönüştür
-                        frame_np = np.array(frame)
-                        # Yüz tespiti yap
-                        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-                        gray = cv2.cvtColor(frame_np, cv2.COLOR_RGB2GRAY)
-                        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-                        
-                        if len(faces) > 0:
-                            # En büyük yüzü al
-                            face = max(faces, key=lambda x: x[2] * x[3])
-                            x, y, w, h = face
-                            # Yüzü merkeze alacak şekilde zoom yap
-                            center_x = x + w/2
-                            center_y = y + h/2
-                            zoom_factor = 1.5
-                            
-                            # Zoom uygula
-                            clip = clip.resize(lambda t: zoom_factor)
-                            clip = clip.set_position(('center', 'center'))
+                # Ses seviyesini %150'ye çıkar
+                clip = clip.volumex(1.5)
                 
-                # Videoyu dikey formata dönüştür
-                # Önce videoyu hedef yüksekliğe göre yeniden boyutlandır
-                clip = clip.resize(height=target_h)
+                # Arka plan videosunu hazırla
+                # Gerekli tekrar sayısını hesapla
+                repeat_count = int(clip_duration / bg_duration) + 1
+                bg_clips = []
+                
+                for _ in range(repeat_count):
+                    bg_clips.append(bg_video)
+                
+                # Arka plan videolarını birleştir
+                bg_combined = concatenate_videoclips(bg_clips)
+                # Kırp
+                bg_combined = bg_combined.subclip(0, clip_duration)
+                
+                # Arka plan videosunun sesini kapat
+                bg_combined = bg_combined.without_audio()
+                
+                # Arka plan videosunu dikey formata dönüştür
+                bg_combined = bg_combined.resize(height=target_h)
+                if bg_combined.w > target_w:
+                    x_center = bg_combined.w / 2
+                    x1 = int(x_center - target_w/2)
+                    x2 = int(x_center + target_w/2)
+                    bg_combined = bg_combined.crop(x1=x1, y1=0, x2=x2, y2=target_h)
+                
+                # Ana videoyu dikey formata dönüştür
+                # Videoyu hedef yüksekliğin %75'ine göre yeniden boyutlandır
+                clip = clip.resize(height=int(target_h * 0.75))
                 
                 # Eğer genişlik hedef genişlikten büyükse, kırp
                 if clip.w > target_w:
-                    # Merkezi hesapla
                     x_center = clip.w / 2
-                    # Kırpma koordinatlarını hesapla
                     x1 = int(x_center - target_w/2)
                     x2 = int(x_center + target_w/2)
-                    clip = clip.crop(x1=x1, y1=0, x2=x2, y2=target_h)
-                # Eğer genişlik hedef genişlikten küçükse, siyah arka plan ekle
-                elif clip.w < target_w:
-                    # Siyah arka plan oluştur
-                    background = ColorClip(size=(target_w, target_h), color=(0, 0, 0))
-                    background = background.set_duration(clip.duration)
-                    
-                    # Videoyu merkeze yerleştir
-                    clip = clip.set_position(('center', 'center'))
-                    
-                    # Arka plan ve videoyu birleştir
-                    clip = CompositeVideoClip([background, clip])
+                    clip = clip.crop(x1=x1, y1=0, x2=x2, y2=clip.h)
+                
+                # Videoyu alttan başlayarak ortala
+                y_position = target_h - clip.h
+                clip = clip.set_position(('center', y_position))
                 
                 # Başlık ekle
                 title = part.get('title', '')
@@ -414,10 +411,10 @@ def create_shorts(video_path, viral_parts):
                         wrapped_title = smart_wrap_text(title)
                         lines = wrapped_title.count('\n') + 1
                         
-                        # Başlık için arka plan oluştur (daha şeffaf ve daha uzun)
-                        bg_height = 350 if lines > 1 else 250  # Yüksekliği artırdım
-                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 120))  # Alpha değeri 120 (yarı şeffaf)
-                        title_bg = title_bg.set_duration(clip.duration)
+                        # Başlık için arka plan oluştur (daha şeffaf)
+                        bg_height = 350 if lines > 1 else 250
+                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 80))  # Alpha değeri 80 (daha şeffaf)
+                        title_bg = title_bg.set_duration(clip_duration)
                         
                         # Başlık metnini oluştur
                         txt_clip = TextClip(
@@ -431,34 +428,38 @@ def create_shorts(video_path, viral_parts):
                             align='center'
                         )
                         
-                        # Başlık pozisyonunu ayarla (daha üstte)
+                        # Başlık pozisyonunu ayarla
                         if lines > 1:
-                            txt_clip = txt_clip.set_position(('center', 75))  # Pozisyonu biraz aşağı çektim
+                            txt_clip = txt_clip.set_position(('center', 75))
                         else:
-                            txt_clip = txt_clip.set_position(('center', 50))  # Pozisyonu biraz aşağı çektim
+                            txt_clip = txt_clip.set_position(('center', 50))
                         
-                        txt_clip = txt_clip.set_duration(clip.duration)
+                        txt_clip = txt_clip.set_duration(clip_duration)
                         
                         # Arka plan ve başlığı birleştir
                         title_composite = CompositeVideoClip([title_bg, txt_clip])
                         title_composite = title_composite.set_position(('center', 0))
                         
                         # Tüm klipleri birleştir
-                        clip = CompositeVideoClip([clip, title_composite])
+                        final_clip = CompositeVideoClip([bg_combined, clip, title_composite], size=(target_w, target_h))
                         
                     except Exception as e:
                         print(f"Başlık eklenirken hata oluştu: {str(e)}")
                         print("Başlık olmadan devam ediliyor...")
+                        final_clip = CompositeVideoClip([bg_combined, clip], size=(target_w, target_h))
+                else:
+                    final_clip = CompositeVideoClip([bg_combined, clip], size=(target_w, target_h))
                 
                 # Klibi kaydet
                 output_path = f'{video_id}_short_{i+1}.mp4'
-                clip.write_videofile(output_path, codec='libx264', bitrate='8000k')
+                final_clip.write_videofile(output_path, codec='libx264', bitrate='8000k')
                 
             except Exception as e:
                 print(f"Kısa video {i+1} oluşturulurken hata: {str(e)}")
                 continue
         
         video.close()
+        bg_video.close()
         
     except Exception as e:
         print(f"Video işlenirken hata oluştu: {str(e)}")
