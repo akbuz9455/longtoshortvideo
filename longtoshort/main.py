@@ -46,7 +46,7 @@ def download_video(url):
     output_template = f'{video_id}.mp4'
     
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # En yüksek kalite
+        'format': 'bestvideo+bestaudio/best',  # En yüksek kaliteli video ve ses
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
@@ -149,14 +149,15 @@ def analyze_content(text):
     Önemli kurallar:
     1. Yanıtın SADECE JSON array olmalı
     2. Her kısım için start_time ve end_time saniye cinsinden olmalı
-    3. Her kısım 15-60 saniye arası olmalı
+    3. Her kısım 15-120 saniye arası olmalı (konu bütünlüğü önemli)
     4. En fazla 5 viral kısım belirle
-    5. Her kısım için içerikle ilgili, ilgi çekici bir başlık ekle
-    6. Konuşan kişi tespit edildiyse speaker_detected true olmalı ve speaker_time belirtilmeli
-    7. Her kısım için context ekle (o kısımda ne anlatıldığı)
-    8. sentence_start ekle (cümlenin başladığı zaman)
-    9. Başlıklar içerikle ilgili ve ilgi çekici olmalı
-    10. Başka hiçbir açıklama ekleme, sadece JSON döndür
+    5. Her kısım için başlık, o kısımdaki konuşmanın içeriğinden seçilmeli
+    6. Başlıklar duygu/durum belirten değil, konuyu anlatan olmalı
+    7. Eğer konuşmada isim geçiyorsa, başlıkta mutlaka o ismi kullan
+    8. Konuşan kişi tespit edildiyse speaker_detected true olmalı ve speaker_time belirtilmeli
+    9. Her kısım için context ekle (o kısımda ne anlatıldığı)
+    10. sentence_start ekle (cümlenin başladığı zaman)
+    11. Başka hiçbir açıklama ekleme, sadece JSON döndür
 
     Altyazı:
     {text}
@@ -266,19 +267,19 @@ def create_shorts(video_path, viral_parts):
                 title = part.get('title', '')
                 if title:
                     try:
-                        # Başlığı satırlara böl
-                        wrapped_title = textwrap.fill(title, width=25)
+                        # Başlığı satırlara böl (her 30 karakterde bir)
+                        wrapped_title = '\n'.join([title[i:i+30] for i in range(0, len(title), 30)])
                         lines = wrapped_title.count('\n') + 1
                         
-                        # Başlık için arka plan oluştur
-                        bg_height = 150 if lines > 1 else 100
+                        # Başlık için arka plan oluştur (2 katı yükseklik)
+                        bg_height = 300 if lines > 1 else 200
                         title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 180))
                         title_bg = title_bg.set_duration(clip.duration)
                         
                         # Başlık metnini oluştur
                         txt_clip = TextClip(
                             wrapped_title,
-                            fontsize=60,
+                            fontsize=70,
                             color='white',
                             font='Arial-Bold',
                             stroke_color='black',
@@ -289,9 +290,9 @@ def create_shorts(video_path, viral_parts):
                         
                         # Başlık pozisyonunu ayarla
                         if lines > 1:
-                            txt_clip = txt_clip.set_position(('center', 30))
+                            txt_clip = txt_clip.set_position(('center', 100))
                         else:
-                            txt_clip = txt_clip.set_position(('center', 50))
+                            txt_clip = txt_clip.set_position(('center', 75))
                         
                         txt_clip = txt_clip.set_duration(clip.duration)
                         
