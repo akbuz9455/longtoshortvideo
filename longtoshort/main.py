@@ -47,7 +47,7 @@ def download_video(url):
     if not video_id:
         raise ValueError("Geçersiz YouTube URL'si")
         
-    output_template = f'{video_id}.mp4'
+    output_template = f'{video_id}.mov'
     
     ydl_opts = {
         'format': 'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -352,6 +352,21 @@ def get_video_thumbnail(video_path, time):
 def create_shorts(video_path, viral_parts):
     """Viral kısımlardan Shorts videoları oluşturur"""
     try:
+        # Video uzantısını kontrol et ve gerekirse değiştir
+        video_path_without_ext = os.path.splitext(video_path)[0]
+        if not os.path.exists(video_path):
+            # MP4 uzantısını dene
+            mp4_path = video_path_without_ext + '.mp4'
+            if os.path.exists(mp4_path):
+                video_path = mp4_path
+            else:
+                # MOV uzantısını dene
+                mov_path = video_path_without_ext + '.mov'
+                if os.path.exists(mov_path):
+                    video_path = mov_path
+                else:
+                    raise FileNotFoundError(f"Video dosyası bulunamadı: {video_path}")
+
         video = VideoFileClip(video_path)
         video_id = os.path.splitext(os.path.basename(video_path))[0]
         
@@ -430,29 +445,29 @@ def create_shorts(video_path, viral_parts):
                             bg_height = 300
                         else:
                             bg_height = 400
-                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 80))  # Alpha değeri 80 (daha şeffaf)
+                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 60))  # Alpha değeri 60 (daha şeffaf)
                         title_bg = title_bg.set_duration(clip_duration)
                         
                         # Başlık metnini oluştur
                         txt_clip = TextClip(
                             wrapped_title,
-                            fontsize=70,
+                            fontsize=75,  # Biraz daha büyük font
                             color='white',
-                            font='Arial-Bold',
+                            font='Impact',  # Daha tombul font
                             stroke_color='black',
-                            stroke_width=2,
-                            method='caption',  # 'label' yerine 'caption' kullan
+                            stroke_width=3,  # Daha kalın outline
+                            method='caption',
                             align='center',
-                            size=(target_w - 100, None)  # Genişliği sınırla
+                            size=(target_w - 100, None)
                         )
                         
-                        # Başlık pozisyonunu ayarla
+                        # Başlık pozisyonunu ayarla (daha yukarıdan başla)
                         if lines == 1:
-                            txt_clip = txt_clip.set_position(('center', 50))
+                            txt_clip = txt_clip.set_position(('center', 25))  # 50'den 25'e
                         elif lines == 2:
-                            txt_clip = txt_clip.set_position(('center', 75))
+                            txt_clip = txt_clip.set_position(('center', 50))  # 75'ten 50'ye
                         else:
-                            txt_clip = txt_clip.set_position(('center', 100))
+                            txt_clip = txt_clip.set_position(('center', 75))  # 100'den 75'e
                         
                         txt_clip = txt_clip.set_duration(clip_duration)
                         

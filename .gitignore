@@ -196,3 +196,5 @@ cython_debug/
 *.vtt
 *.ttml
 *.mp3
+*.m4a
+*.mov
