@@ -388,8 +388,8 @@ def create_shorts(video_path, viral_parts):
                 # Kısa video klibi oluştur
                 clip = video.subclip(start_time, end_time)
                 
-                # Ses seviyesini %150'ye çıkar
-                clip = clip.volumex(1.5)
+                # Ses seviyesini %175'e çıkar
+                clip = clip.volumex(1.75)
                 
                 # Arka plan videosunu hazırla
                 # Gerekli tekrar sayısını hesapla
@@ -416,18 +416,19 @@ def create_shorts(video_path, viral_parts):
                     bg_combined = bg_combined.crop(x1=x1, y1=0, x2=x2, y2=target_h)
                 
                 # Ana videoyu dikey formata dönüştür
-                # Videoyu hedef yüksekliğin %70'ine göre yeniden boyutlandır (daha küçük)
-                clip = clip.resize(height=int(target_h * 0.70))
+                # Videoyu hedef yüksekliğin %65'ine göre yeniden boyutlandır (daha küçük)
+                clip = clip.resize(height=int(target_h * 0.65))
                 
-                # Eğer genişlik hedef genişlikten büyükse, kırp
-                if clip.w > target_w:
+                # Video genişliğini hedef genişliğin %90'ına ayarla (yanlardan kırpma)
+                target_clip_width = int(target_w * 0.90)
+                if clip.w > target_clip_width:
                     x_center = clip.w / 2
-                    x1 = int(x_center - target_w/2)
-                    x2 = int(x_center + target_w/2)
+                    x1 = int(x_center - target_clip_width/2)
+                    x2 = int(x_center + target_clip_width/2)
                     clip = clip.crop(x1=x1, y1=0, x2=x2, y2=clip.h)
                 
-                # Videoyu alttan başlayarak ortala ve biraz yukarı taşı
-                y_position = target_h - clip.h - 150  # 150 piksel yukarı
+                # Videoyu alttan başlayarak ortala ve biraz daha yukarı taşı
+                y_position = target_h - clip.h - 250
                 clip = clip.set_position(('center', y_position))
                 
                 # Başlık ekle
@@ -440,40 +441,44 @@ def create_shorts(video_path, viral_parts):
                         
                         # Başlık için arka plan oluştur (daha şeffaf)
                         if lines == 1:
-                            bg_height = 200
+                            bg_height = 180
+                            bg_y_offset = 10
                         elif lines == 2:
-                            bg_height = 300
+                            bg_height = 280
+                            bg_y_offset = 20
                         else:
-                            bg_height = 400
-                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 60))  # Alpha değeri 60 (daha şeffaf)
+                            bg_height = 380
+                            bg_y_offset = 30
+                            
+                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 60))
                         title_bg = title_bg.set_duration(clip_duration)
                         
                         # Başlık metnini oluştur
                         txt_clip = TextClip(
                             wrapped_title,
-                            fontsize=75,  # Biraz daha büyük font
+                            fontsize=75,
                             color='white',
-                            font='Impact',  # Daha tombul font
+                            font='Chalkboard',
                             stroke_color='black',
-                            stroke_width=3,  # Daha kalın outline
+                            stroke_width=4,
                             method='caption',
                             align='center',
                             size=(target_w - 100, None)
                         )
                         
-                        # Başlık pozisyonunu ayarla (daha yukarıdan başla)
+                        # Başlık pozisyonunu ayarla
                         if lines == 1:
-                            txt_clip = txt_clip.set_position(('center', 25))  # 50'den 25'e
+                            txt_clip = txt_clip.set_position(('center', 25))
                         elif lines == 2:
-                            txt_clip = txt_clip.set_position(('center', 50))  # 75'ten 50'ye
+                            txt_clip = txt_clip.set_position(('center', 50))
                         else:
-                            txt_clip = txt_clip.set_position(('center', 75))  # 100'den 75'e
+                            txt_clip = txt_clip.set_position(('center', 75))
                         
                         txt_clip = txt_clip.set_duration(clip_duration)
                         
                         # Arka plan ve başlığı birleştir
                         title_composite = CompositeVideoClip([title_bg, txt_clip])
-                        title_composite = title_composite.set_position(('center', 0))
+                        title_composite = title_composite.set_position(('center', bg_y_offset))  # Arka planı yukarıdan başlat
                         
                         # Tüm klipleri birleştir
                         final_clip = CompositeVideoClip([bg_combined, clip, title_composite], size=(target_w, target_h))
