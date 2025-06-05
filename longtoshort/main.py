@@ -13,6 +13,9 @@ from moviepy.config import change_settings
 import textwrap
 from xml.etree import ElementTree as ET
 
+# FFmpeg yolunu ekle
+os.environ["PATH"] += os.pathsep + r"D:\ffmpeg\bin"
+
 # ImageMagick yapılandırması
 IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
 change_settings({"IMAGEMAGICK_BINARY": IMAGEMAGICK_BINARY})
@@ -47,7 +50,7 @@ def download_video(url):
     output_template = f'{video_id}.mp4'
     
     ydl_opts = {
-        'format': 'best',  # En iyi kaliteyi otomatik seç
+        'format': 'bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
@@ -58,11 +61,14 @@ def download_video(url):
         'subtitleslangs': ['tr', 'en'],
         'postprocessors': [{
             'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mp4',
+            'preferedformat': 'mov',
         }],
         'skip_download': False,
         'keepvideo': True,
-        'verbose': True  # Daha detaylı hata ayıklama için
+        'verbose': True,
+        'format_sort': ['res:1080', 'ext:mp4:m4a', 'size', 'br', 'asr'],
+        'merge_output_format': 'mov',
+        'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe"
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -71,6 +77,12 @@ def download_video(url):
             print("\nVideo bilgileri:")
             print(f"Başlık: {info.get('title', 'Bilinmiyor')}")
             print(f"Süre: {info.get('duration', 'Bilinmiyor')} saniye")
+            print(f"Çözünürlük: {info.get('height', 'Bilinmiyor')}p")
+            print(f"Format: {info.get('format', 'Bilinmiyor')}")
+            print(f"Format ID: {info.get('format_id', 'Bilinmiyor')}")
+            print(f"Format Açıklaması: {info.get('format_note', 'Bilinmiyor')}")
+            print(f"Video Codec: {info.get('vcodec', 'Bilinmiyor')}")
+            print(f"Audio Codec: {info.get('acodec', 'Bilinmiyor')}")
             print(f"Altyazı dilleri: {list(info.get('subtitles', {}).keys())}")
             print(f"Otomatik altyazı dilleri: {list(info.get('automatic_captions', {}).keys())}")
             return output_template, info
@@ -389,8 +401,8 @@ def create_shorts(video_path, viral_parts):
                     bg_combined = bg_combined.crop(x1=x1, y1=0, x2=x2, y2=target_h)
                 
                 # Ana videoyu dikey formata dönüştür
-                # Videoyu hedef yüksekliğin %75'ine göre yeniden boyutlandır
-                clip = clip.resize(height=int(target_h * 0.75))
+                # Videoyu hedef yüksekliğin %70'ine göre yeniden boyutlandır (daha küçük)
+                clip = clip.resize(height=int(target_h * 0.70))
                 
                 # Eğer genişlik hedef genişlikten büyükse, kırp
                 if clip.w > target_w:
@@ -399,8 +411,8 @@ def create_shorts(video_path, viral_parts):
                     x2 = int(x_center + target_w/2)
                     clip = clip.crop(x1=x1, y1=0, x2=x2, y2=clip.h)
                 
-                # Videoyu alttan başlayarak ortala
-                y_position = target_h - clip.h
+                # Videoyu alttan başlayarak ortala ve biraz yukarı taşı
+                y_position = target_h - clip.h - 150  # 150 piksel yukarı
                 clip = clip.set_position(('center', y_position))
                 
                 # Başlık ekle
@@ -412,7 +424,12 @@ def create_shorts(video_path, viral_parts):
                         lines = wrapped_title.count('\n') + 1
                         
                         # Başlık için arka plan oluştur (daha şeffaf)
-                        bg_height = 350 if lines > 1 else 250
+                        if lines == 1:
+                            bg_height = 200
+                        elif lines == 2:
+                            bg_height = 300
+                        else:
+                            bg_height = 400
                         title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 80))  # Alpha değeri 80 (daha şeffaf)
                         title_bg = title_bg.set_duration(clip_duration)
                         
@@ -424,15 +441,18 @@ def create_shorts(video_path, viral_parts):
                             font='Arial-Bold',
                             stroke_color='black',
                             stroke_width=2,
-                            method='label',
-                            align='center'
+                            method='caption',  # 'label' yerine 'caption' kullan
+                            align='center',
+                            size=(target_w - 100, None)  # Genişliği sınırla
                         )
                         
                         # Başlık pozisyonunu ayarla
-                        if lines > 1:
+                        if lines == 1:
+                            txt_clip = txt_clip.set_position(('center', 50))
+                        elif lines == 2:
                             txt_clip = txt_clip.set_position(('center', 75))
                         else:
-                            txt_clip = txt_clip.set_position(('center', 50))
+                            txt_clip = txt_clip.set_position(('center', 100))
                         
                         txt_clip = txt_clip.set_duration(clip_duration)
                         
@@ -451,8 +471,20 @@ def create_shorts(video_path, viral_parts):
                     final_clip = CompositeVideoClip([bg_combined, clip], size=(target_w, target_h))
                 
                 # Klibi kaydet
-                output_path = f'{video_id}_short_{i+1}.mp4'
-                final_clip.write_videofile(output_path, codec='libx264', bitrate='8000k')
+                output_path = f'{video_id}_short_{i+1}.mov'
+                final_clip.write_videofile(
+                    output_path,
+                    codec='libx264',
+                    bitrate='4000k',
+                    audio_codec='aac',
+                    audio_bitrate='192k',
+                    preset='medium',
+                    threads=4,
+                    ffmpeg_params=[
+                        '-crf', '23',
+                        '-movflags', '+faststart'
+                    ]
+                )
                 
             except Exception as e:
                 print(f"Kısa video {i+1} oluşturulurken hata: {str(e)}")
