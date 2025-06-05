@@ -416,11 +416,11 @@ def create_shorts(video_path, viral_parts):
                     bg_combined = bg_combined.crop(x1=x1, y1=0, x2=x2, y2=target_h)
                 
                 # Ana videoyu dikey formata dönüştür
-                # Videoyu hedef yüksekliğin %65'ine göre yeniden boyutlandır (daha küçük)
+                # Videoyu hedef yüksekliğin %65'ine göre yeniden boyutlandır
                 clip = clip.resize(height=int(target_h * 0.65))
                 
-                # Video genişliğini hedef genişliğin %90'ına ayarla (yanlardan kırpma)
-                target_clip_width = int(target_w * 0.90)
+                # Video genişliğini hedef genişliğin %93'üne ayarla (yanlardan kırpma)
+                target_clip_width = int(target_w * 0.93)
                 if clip.w > target_clip_width:
                     x_center = clip.w / 2
                     x1 = int(x_center - target_clip_width/2)
@@ -428,7 +428,7 @@ def create_shorts(video_path, viral_parts):
                     clip = clip.crop(x1=x1, y1=0, x2=x2, y2=clip.h)
                 
                 # Videoyu alttan başlayarak ortala ve biraz daha yukarı taşı
-                y_position = target_h - clip.h - 250
+                y_position = target_h - clip.h - 250  # 200'den 250'ye çıkarıldı
                 clip = clip.set_position(('center', y_position))
                 
                 # Başlık ekle
@@ -439,7 +439,7 @@ def create_shorts(video_path, viral_parts):
                         wrapped_title = smart_wrap_text(title)
                         lines = wrapped_title.count('\n') + 1
                         
-                        # Başlık için arka plan oluştur (daha şeffaf)
+                        # Başlık için arka plan oluştur
                         if lines == 1:
                             bg_height = 180
                             bg_y_offset = 10
@@ -458,7 +458,7 @@ def create_shorts(video_path, viral_parts):
                             wrapped_title,
                             fontsize=75,
                             color='white',
-                            font='Chalkboard',
+                            font='DynaPuff-Regular',
                             stroke_color='black',
                             stroke_width=4,
                             method='caption',
@@ -478,7 +478,7 @@ def create_shorts(video_path, viral_parts):
                         
                         # Arka plan ve başlığı birleştir
                         title_composite = CompositeVideoClip([title_bg, txt_clip])
-                        title_composite = title_composite.set_position(('center', bg_y_offset))  # Arka planı yukarıdan başlat
+                        title_composite = title_composite.set_position(('center', bg_y_offset))
                         
                         # Tüm klipleri birleştir
                         final_clip = CompositeVideoClip([bg_combined, clip, title_composite], size=(target_w, target_h))
