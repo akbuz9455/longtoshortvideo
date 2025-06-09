@@ -1076,20 +1076,41 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 output_path = os.path.join(output_dir, f'{video_id}_{safe_title}_{timestamp}.mov')
                 print(f"\nKısa video kaydediliyor: {output_path}")
                 
-                final_clip.write_videofile(
-                    output_path,
-                    codec='libx264',
-                    bitrate='4000k',
-                    audio_codec='aac',
-                    audio_bitrate='192k',
-                    preset='medium',
-                    threads=4,
-                    ffmpeg_params=[
-                        '-crf', '23',
-                        '-movflags', '+faststart'
-                    ]
-                )
-                print(f"✓ Kısa video kaydedildi!")
+                # Önce NVIDIA NVENC ile kaydetmeyi dene
+                try:
+                    final_clip.write_videofile(
+                        output_path.replace(".mov", "_nvenc.mov"), # Çıktı dosyası adı sonunda _nvenc olacak
+                        codec='h264_nvenc', # NVIDIA GPU donanım kodlayıcısı
+                        bitrate='4000k',
+                        audio_codec='aac',
+                        audio_bitrate='192k',
+                        preset='p7', # NVENC için optimize edilmiş preset (hız ve kalite dengesi)
+                        # threads=4, # Donanım kodlamada genellikle thread sayısı otomatik yönetilir.
+                        ffmpeg_params=[
+                            '-rc:v', 'vbr_hq', # Değişken bit oranı, yüksek kalite
+                            '-cq:v', '23', # Kalite ayarı (CRF yerine)
+                            '-movflags', '+faststart'
+                        ]
+                    )
+                    print(f"✓ Kısa video (NVIDIA NVENC ile) kaydedildi: {output_path.replace('.mov', '_nvenc.mov')}")
+                except Exception as e:
+                    print(f"Uyarı: NVIDIA NVENC ile video kaydedilirken hata oluştu: {str(e)}")
+                    print("CPU tabanlı libx264 kodlayıcısına geri dönülüyor...")
+                    # Hata durumunda CPU tabanlı libx264 kodlayıcısı ile kaydet
+                    final_clip.write_videofile(
+                        output_path,
+                        codec='libx264',
+                        bitrate='4000k',
+                        audio_codec='aac',
+                        audio_bitrate='192k',
+                        preset='medium',
+                        threads=4,
+                        ffmpeg_params=[
+                            '-crf', '23',
+                            '-movflags', '+faststart'
+                        ]
+                    )
+                    print(f"✓ Kısa video (libx264 ile) kaydedildi: {output_path}")
 
             except Exception as e:
                 print(f"\nKısa video oluşturulurken hata: {str(e)}")
