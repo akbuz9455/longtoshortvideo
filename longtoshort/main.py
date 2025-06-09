@@ -755,7 +755,7 @@ def convert_vtt_time_to_seconds(time_str):
         print(f"Zaman dönüştürme hatası: {str(e)}")
         return 0.0
 
-def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuff/static/DynaPuff-Regular.ttf'):
+def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuff/static/DynaPuff-Regular.ttf', output_folder=None):
     """PIL kullanarak metin görüntüsü oluşturur"""
     # try: # Geçici olarak kaldırıldı
         # Ana font dosyasının varlığını kontrol et
@@ -799,6 +799,7 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
             
             total_text_height = 0
             max_line_width = 0
+            min_top_offset_current_attempt = 0 # Initialize for current attempt
             for line in lines:
                 bbox = main_font_for_sizing.getbbox(line)
                 line_height = bbox[3] - bbox[1]
@@ -806,11 +807,18 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
                 total_text_height += line_height
                 if line_width > max_line_width:
                     max_line_width = line_width
-            total_text_height += (len(lines) - 1) * 10 # Satır arası boşluk
+                
+                # Update min_top_offset for the current line's bounding box
+                # bbox[1] is the top coordinate, which can be negative if parts of the character go above the baseline
+                if bbox[1] < min_top_offset_current_attempt:
+                    min_top_offset_current_attempt = bbox[1]
 
-            # Metnin sığıp sığmadığını kontrol et
-            if max_line_width <= width and total_text_height <= height:
-                print(f"Metin başarıyla sığdırıldı. Font Boyutu: {current_font_size}, Genişlik: {max_line_width}/{width}, Yükseklik: {total_text_height}/{height}")
+            total_text_height += (len(lines) - 1) * 10 # Satır arası boşluk
+            min_top_offset_overall = min_top_offset_current_attempt # Update for final use
+
+            available_height_for_sizing = height - 40 # Add 20px padding top and bottom
+            if max_line_width <= width and total_text_height <= available_height_for_sizing:
+                print(f"Metin başarıyla sığdırıldı. Font Boyutu: {current_font_size}, Genişlik: {max_line_width}/{width}, Yükseklik: {total_text_height}/{available_height_for_sizing})")
                 break
             else:
                 if current_font_size > 10: # Minimum font boyutu
@@ -844,12 +852,21 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
     image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    # Metni dikeyde ortala
-    y_position = (height - total_text_height) // 2
-    if y_position < 0:
-        y_position = 0
+    # Metni dikeyde ortala ve ekstra boşluk bırak
+    vertical_padding = 20 # Add 20px padding from top and bottom
+    y_position = (height - total_text_height) // 2 
+    
+    # Adjust y_position based on the highest point above baseline to prevent clipping
+    # Add absolute value of min_top_offset_overall to y_position to shift text down if ascenders are clipped
+    y_position_adjusted = y_position - min_top_offset_overall # This effectively pushes the entire block down
+    
+    # Ensure minimum vertical padding from top
+    if y_position_adjusted < vertical_padding:
+        y_position_adjusted = vertical_padding
 
-    current_y = y_position
+    print(f"DEBUG: Initial y_position: {y_position}, min_top_offset_overall: {min_top_offset_overall}, y_position_adjusted: {y_position_adjusted}")
+
+    current_y = y_position_adjusted
     
     # Her satırı karakter karakter çiz
     for line in lines:
@@ -858,15 +875,26 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
         x = (width - line_width) // 2
         
         current_x = x
-        for char in line:
-            if emoji.is_emoji(char) and final_emoji_font: # Eğer karakter emoji ise ve emoji fontu varsa
-                char_bbox = final_emoji_font.getbbox(char)
-                char_width = char_bbox[2] - char_bbox[0]
-                draw.text((current_x, current_y), char, font=final_emoji_font, fill='white', stroke_width=2, stroke_fill='black')
+        for char_index, char in enumerate(line):
+            is_emoji_char = emoji.is_emoji(char)
+            print(f"Processing char: '{char}', is_emoji: {is_emoji_char}, has_emojis: {has_emojis}, final_emoji_font: {final_emoji_font is not None}") # More detailed debug
+
+            if is_emoji_char and final_emoji_font: # Eğer karakter emoji ise ve emoji fontu varsa
+                selected_font = final_emoji_font
+                print(f"Using emoji font for char: '{char}' at ({current_x}, {current_y})") # Debug
+                # Draw emojis WITHOUT stroke, as stroke can interfere with color fonts
+                draw.text((current_x, current_y), char, font=selected_font, fill='white') # Re-added fill='white' for emojis
             else: # Değilse veya emoji fontu yoksa ana fontu kullan
-                char_bbox = final_main_font.getbbox(char)
-                char_width = char_bbox[2] - char_bbox[0]
-                draw.text((current_x, current_y), char, font=final_main_font, fill='white', stroke_width=2, stroke_fill='black')
+                selected_font = final_main_font
+                print(f"Using main font for char: '{char}' at ({current_x}, {current_y})") # Debug
+                draw.text((current_x, current_y), char, font=selected_font, fill='white', stroke_width=2, stroke_fill='black')
+            
+            char_bbox = selected_font.getbbox(char)
+            char_width = char_bbox[2] - char_bbox[0]
+            
+            # Adjust y_position for each character if fonts have different baselines
+            # This is complex and might not be needed for simple cases. For now, assume consistent baseline.
+            
             current_x += char_width # Bir sonraki karakter için x konumunu ilerlet
         
         # Bir sonraki satır için y konumunu ilerlet
@@ -874,6 +902,9 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
 
     # Görüntüyü kaydet (test için)
     test_image_path = 'test_text.png'
+    if output_folder: # Eğer bir çıktı klasörü belirtilmişse, dosya yolunu bu klasörün içine ayarla
+        test_image_path = os.path.join(output_folder, 'test_text.png')
+
     image.save(test_image_path)
     print(f"Test görüntüsü kaydedildi: {test_image_path}")
     print(f"Type of 'image' before np.array: {type(image)}") # DEBUG Print
@@ -970,6 +1001,14 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                 title = part.get('title', '')
                 if title:
                     try:
+                        # Başlık için güvenli bir dosya adı oluştur
+                        safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')
+                        # Çıktı klasörünü belirle
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_dir = os.path.join('.', f"shorts_output_{safe_title}_{timestamp}")
+                        os.makedirs(output_dir, exist_ok=True)
+                        print(f"Çıktı klasörü oluşturuldu: {output_dir}")
+
                         # Başlık için arka plan oluştur
                         title_bg_height = 180
                         title_bg = ColorClip(size=(target_w, title_bg_height), color=(0, 0, 0, 128))
@@ -982,7 +1021,8 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                             target_w - 120, # Daha geniş alan bırak (her iki yandan 60px boşluk)
                             title_bg_height,
                             font_size=90,
-                            main_font_path='DynaPuff/static/DynaPuff-Regular.ttf' # Ana fontu belirle
+                            main_font_path='DynaPuff/static/DynaPuff-Regular.ttf', # Ana fontu belirle
+                            output_folder=output_dir # Test görüntüsünü kaydetmek için klasör yolunu ilet
                         )
                         print(f"Type of 'text_image_np' before ImageClip: {type(text_image_np)}") # DEBUG Print
                         
@@ -1019,10 +1059,10 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                 ).set_duration(clip_duration)
 
                 # Klibi kaydet
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Başlıktan güvenli bir dosya adı oluştur
-                safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')
-                output_path = f'{video_id}_{safe_title}_{timestamp}.mov'
+                # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # Zaten yukarıda tanımlandı
+                # Başlıktan güvenli bir dosya adı oluştur # Zaten yukarıda tanımlandı
+                # output_path = f'{video_id}_{safe_title}_{timestamp}.mov' # Klasör yolunu da dahil et
+                output_path = os.path.join(output_dir, f'{video_id}_{safe_title}_{timestamp}.mov')
                 print(f"\nKısa video kaydediliyor: {output_path}")
                 
                 final_clip.write_videofile(
