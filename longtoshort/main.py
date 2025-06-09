@@ -1035,18 +1035,18 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                             continue # Geçersiz süre, atla
 
                         # Metni MoviePy TextClip için yeniden paketle
-                        wrapped_sub_text = textwrap.fill(sub.content, width=40) # Altyazı satır uzunluğunu sınırla
+                        wrapped_sub_text = textwrap.fill(sub.content, width=25) # Altyazı satır uzunluğunu 25 karakterle sınırla
 
                         # Altyazı için arka plan
-                        sub_bg_height = 80
+                        sub_bg_height = 120 # Arka plan yüksekliğini arttırdık
                         sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 128))
                         sub_bg = sub_bg.set_duration(sub_end - sub_start)
                         sub_bg = sub_bg.set_start(sub_start)
-                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 50))
+                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 120)) # Konumu daha da yukarı çektik
                         
                         sub_txt_clip = TextClip(
                             wrapped_sub_text,
-                            fontsize=50, # Font boyutunu büyüttük
+                            fontsize=70, # Font boyutunu 70 yaptık
                             color='white',
                             font='Arial-Bold', # Kalın font stili
                             stroke_color='black',
@@ -1056,7 +1056,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         )
                         sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
                         sub_txt_clip = sub_txt_clip.set_start(sub_start)
-                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 50 + 10))
+                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 120 + 10)) # Konumu daha da yukarı çektik
                         
                         # Animasyon ekle (fade in/out)
                         fade_duration = 0.2 # Hızlı geçiş
