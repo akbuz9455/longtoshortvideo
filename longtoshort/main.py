@@ -1042,7 +1042,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 128))
                         sub_bg = sub_bg.set_duration(sub_end - sub_start)
                         sub_bg = sub_bg.set_start(sub_start)
-                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 120)) # Konumu daha da yukarı çektik
+                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 150)) # Konumu daha da yukarı çektik
                         
                         sub_txt_clip = TextClip(
                             wrapped_sub_text,
@@ -1056,7 +1056,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         )
                         sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
                         sub_txt_clip = sub_txt_clip.set_start(sub_start)
-                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 120 + 10)) # Konumu daha da yukarı çektik
+                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 150 + 10)) # Konumu daha da yukarı çektik
                         
                         # Animasyon ekle (fade in/out)
                         fade_duration = 0.2 # Hızlı geçiş
@@ -1089,7 +1089,12 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         ffmpeg_params=[
                             '-rc:v', 'vbr_hq', # Değişken bit oranı, yüksek kalite
                             '-cq:v', '23', # Kalite ayarı (CRF yerine)
-                            '-movflags', '+faststart'
+                            '-movflags', '+faststart',
+                            '-pix_fmt', 'yuv420p',
+                            '-colorspace', 'bt709',
+                            '-color_primaries', 'bt709',
+                            '-color_trc', 'bt709',
+                            '-color_range', 'tv'
                         ]
                     )
                     print(f"✓ Kısa video (NVIDIA NVENC ile) kaydedildi: {output_path.replace('.mov', '_nvenc.mov')}")
@@ -1107,7 +1112,13 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         threads=4,
                         ffmpeg_params=[
                             '-crf', '23',
-                            '-movflags', '+faststart'
+                            '-movflags', '+faststart',
+                            '-pix_fmt', 'yuv420p',
+                            '-vf', 'format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2',
+                            '-colorspace', 'bt709',
+                            '-color_primaries', 'bt709',
+                            '-color_trc', 'bt709',
+                            '-color_range', 'tv'
                         ]
                     )
                     print(f"✓ Kısa video (libx264 ile) kaydedildi: {output_path}")
@@ -1257,7 +1268,7 @@ def transcribe_audio(video_path, language=None):
         print("\nKonuşmalar transkript ediliyor...")
         
         # Whisper modelini yükle
-        model = WhisperModel("large-v3", device="cuda" if torch.cuda.is_available() else "cpu", compute_type="float32")
+        model = WhisperModel("small", device="cuda" if torch.cuda.is_available() else "cpu", compute_type="float32")
         
         # Videodan ses dosyasını çıkar
         audio_path = "temp_audio.wav"
