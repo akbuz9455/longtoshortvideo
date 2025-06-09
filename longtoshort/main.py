@@ -14,7 +14,11 @@ import textwrap
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import subprocess
-import emoji
+import whisper
+import torch
+from faster_whisper import WhisperModel
+import srt
+import datetime as dt
 
 # FFmpeg yolunu ekle
 os.environ["PATH"] += os.pathsep + r"D:\ffmpeg\bin"
@@ -425,8 +429,7 @@ def analyze_content(text, duration):
        - İlgi çekici ve tıklama isteği uyandırmalı
        - Kısa ve öz olmalı (en fazla 50 karakter)
        - Clickbait tarzında ama yanıltıcı olmamalı
-       - Merak uyandırmalı
-       - Emoji kullanabilirsin (en fazla 2 tane)
+       - Kesinlikle emoji kullanma!
        - Türkçe karakterler kullan (ç, ş, ı, ğ, ü, ö)
        - Büyük harfle başla
     4. Her kısım için açıklama şu özelliklere sahip olmalı:
@@ -757,38 +760,19 @@ def convert_vtt_time_to_seconds(time_str):
 
 def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuff/static/DynaPuff-Regular.ttf', output_folder=None):
     """PIL kullanarak metin görüntüsü oluşturur"""
-    # try: # Geçici olarak kaldırıldı
-        # Ana font dosyasının varlığını kontrol et
+    # Ana font dosyasının varlığını kontrol et
     if not os.path.exists(main_font_path):
         print(f"HATA: Ana font dosyası bulunamadı: {main_font_path}")
         raise FileNotFoundError(f"Ana font dosyası bulunamadı: {main_font_path}")
-
-    emoji_font_path = 'Noto_Color_Emoji/NotoColorEmoji-Regular.ttf'
-    emoji_font = None
-    has_emojis = emoji.emoji_count(text) > 0
-    
-    # Emoji fontunu yüklemeye çalış
-    if has_emojis and os.path.exists(emoji_font_path):
-        try:
-            # Emoji fontu ana font boyutuyla yüklensin
-            emoji_font = ImageFont.truetype(emoji_font_path, font_size)
-            print(f"Emoji fontu başarıyla yüklendi: {emoji_font_path}")
-        except Exception as e:
-            print(f"Emoji fontu yüklenirken hata: {str(e)}. Emoji fontu kullanılamayacak.")
-            emoji_font = None # Yüklenemezse fallback
-    else:
-        print(f"Metindeki emoji sayısı: {emoji.emoji_count(text)}")
-        print(f"Emoji fontu ({emoji_font_path}) var mı: {os.path.exists(emoji_font_path)}")
-        if not has_emojis:
-            print("Metinde emoji algılanmadı.")
-        elif not os.path.exists(emoji_font_path):
-            print("Emoji font dosyası bulunamadı.")
 
     current_font_size = font_size
     max_attempts = 10
     
     # Metin sığana kadar font boyutunu küçült (ana font ile ölçüm yaparak)
     main_font_for_sizing = None
+    total_text_height = 0
+    min_top_offset_overall = 0
+
     for attempt in range(max_attempts):
         try:
             main_font_for_sizing = ImageFont.truetype(main_font_path, current_font_size)
@@ -816,36 +800,33 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
             total_text_height += (len(lines) - 1) * 10 # Satır arası boşluk
             min_top_offset_overall = min_top_offset_current_attempt # Update for final use
 
-            available_height_for_sizing = height - 40 # Add 20px padding top and bottom
+            available_height_for_sizing = height - 80 # Increased padding
             if max_line_width <= width and total_text_height <= available_height_for_sizing:
                 print(f"Metin başarıyla sığdırıldı. Font Boyutu: {current_font_size}, Genişlik: {max_line_width}/{width}, Yükseklik: {total_text_height}/{available_height_for_sizing})")
-                break
+                break # Başarılı, döngüden çık
             else:
-                if current_font_size > 10: # Minimum font boyutu
+                print(f"DEBUG: Metin sığmadı - max_line_width: {max_line_width}/{width}, total_text_height: {total_text_height}/{available_height_for_sizing}")
+                if current_font_size > 10:
                     current_font_size -= 5
                     print(f"Metin sığmadı, font boyutu düşürülüyor: {current_font_size}")
+                    # Bir sonraki denemeye devam et
                 else:
                     print("Minimum font boyutuna ulaşıldı, metin hala sığmıyor.")
-                    break
+                    break # Sığmıyor, döngüden çık
+
         except Exception as e:
             print(f"Deneme {attempt+1}: Font boyutlandırma sırasında hata: {str(e)}")
             if current_font_size > 10:
                 current_font_size -= 5
-                continue
-            raise
+                continue # Hata oluştu, fontu küçültüp tekrar dene
+            raise # Minimum font boyutunda da hata, hatayı fırlat
 
 
     if main_font_for_sizing is None:
         raise Exception("Ana font yüklenemedi veya boyutlandırılamadı.")
 
-    # Son seçilen font boyutuyla ana fontu ve emoji fontunu yeniden yükle
+    # Son seçilen font boyutuyla ana fontu yeniden yükle
     final_main_font = ImageFont.truetype(main_font_path, current_font_size)
-    final_emoji_font = None
-    if has_emojis and os.path.exists(emoji_font_path):
-            try:
-                final_emoji_font = ImageFont.truetype(emoji_font_path, current_font_size)
-            except Exception as e:
-                print(f"Final emoji fontu yüklenirken hata: {str(e)}")
 
 
     # Son görüntüyü oluştur
@@ -853,7 +834,7 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
     draw = ImageDraw.Draw(image)
 
     # Metni dikeyde ortala ve ekstra boşluk bırak
-    vertical_padding = 20 # Add 20px padding from top and bottom
+    vertical_padding = 80 # Increased padding
     y_position = (height - total_text_height) // 2 
     
     # Adjust y_position based on the highest point above baseline to prevent clipping
@@ -864,38 +845,21 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
     if y_position_adjusted < vertical_padding:
         y_position_adjusted = vertical_padding
 
+    # Alt kısım için ekstra boşluk ekle
+    bottom_padding = 40  # Alt kısım için ekstra boşluk
+    y_position_adjusted = min(y_position_adjusted, height - total_text_height - bottom_padding)
+
     print(f"DEBUG: Initial y_position: {y_position}, min_top_offset_overall: {min_top_offset_overall}, y_position_adjusted: {y_position_adjusted}")
 
     current_y = y_position_adjusted
     
-    # Her satırı karakter karakter çiz
+    # Her satırı ana font ile çiz
     for line in lines:
         # Satırın yatayda ortalanması için başlangıç noktası
         line_width = final_main_font.getbbox(line)[2] - final_main_font.getbbox(line)[0]
         x = (width - line_width) // 2
         
-        current_x = x
-        for char_index, char in enumerate(line):
-            is_emoji_char = emoji.is_emoji(char)
-            print(f"Processing char: '{char}', is_emoji: {is_emoji_char}, has_emojis: {has_emojis}, final_emoji_font: {final_emoji_font is not None}") # More detailed debug
-
-            if is_emoji_char and final_emoji_font: # Eğer karakter emoji ise ve emoji fontu varsa
-                selected_font = final_emoji_font
-                print(f"Using emoji font for char: '{char}' at ({current_x}, {current_y})") # Debug
-                # Draw emojis WITHOUT stroke, as stroke can interfere with color fonts
-                draw.text((current_x, current_y), char, font=selected_font, fill='white') # Re-added fill='white' for emojis
-            else: # Değilse veya emoji fontu yoksa ana fontu kullan
-                selected_font = final_main_font
-                print(f"Using main font for char: '{char}' at ({current_x}, {current_y})") # Debug
-                draw.text((current_x, current_y), char, font=selected_font, fill='white', stroke_width=2, stroke_fill='black')
-            
-            char_bbox = selected_font.getbbox(char)
-            char_width = char_bbox[2] - char_bbox[0]
-            
-            # Adjust y_position for each character if fonts have different baselines
-            # This is complex and might not be needed for simple cases. For now, assume consistent baseline.
-            
-            current_x += char_width # Bir sonraki karakter için x konumunu ilerlet
+        draw.text((x, current_y), line, font=final_main_font, fill='white', stroke_width=2, stroke_fill='black')
         
         # Bir sonraki satır için y konumunu ilerlet
         current_y += (final_main_font.getbbox(line)[3] - final_main_font.getbbox(line)[1]) + 10 # Satır yüksekliği + boşluk
@@ -910,15 +874,8 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
     print(f"Type of 'image' before np.array: {type(image)}") # DEBUG Print
         
     return np.array(image) # Numpy array olarak döndür
-        
-    # except Exception as e: # Geçici olarak kaldırıldı
-    #     print(f"Metin görüntüsü oluşturulurken hata: {str(e)}")
-    #     print("Hata detayları:")
-    #     import traceback
-    #     traceback.print_exc()
-    #     raise # Hatanın tekrar fırlatılması
-    
-def create_shorts(video_path, viral_parts, show_subtitles=True):
+
+def create_shorts(video_path, viral_parts, srt_path=None):
     """Viral kısımlardan Shorts videoları oluşturur"""
     try:
         # Video uzantısını kontrol et ve gerekirse değiştir
@@ -998,35 +955,36 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                 overlay_clips_for_this_short = []
 
                 # Başlık ekle
-                title = part.get('title', '')
-                if title:
+                title_full = part.get('title', '')
+                if title_full:
                     try:
+                        # Clean [] from title using re.sub for robustness
+                        title_full = re.sub(r'\[|\]', '', title_full).strip() # Using re.sub for cleaner removal
+                        print(f"DEBUG: Cleaned title_full: '{title_full}'") # Added this debug print
+
                         # Başlık için güvenli bir dosya adı oluştur
-                        safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')
+                        safe_title = re.sub(r'[^\w\s-]', '', title_full).strip().replace(' ', '_')
                         # Çıktı klasörünü belirle
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
                         output_dir = os.path.join('.', f"shorts_output_{safe_title}_{timestamp}")
                         os.makedirs(output_dir, exist_ok=True)
                         print(f"Çıktı klasörü oluşturuldu: {output_dir}")
 
                         # Başlık için arka plan oluştur
-                        title_bg_height = 180
+                        title_bg_height = 240 # Increased height again
                         title_bg = ColorClip(size=(target_w, title_bg_height), color=(0, 0, 0, 128))
                         title_bg = title_bg.set_duration(clip_duration)
                         title_bg = title_bg.set_position(('center', 50))
 
-                        # PIL ile metin görüntüsü oluştur
+                        # Ana başlık metin görüntüsünü oluştur
                         text_image_np = create_text_image(
-                            title,
-                            target_w - 120, # Daha geniş alan bırak (her iki yandan 60px boşluk)
-                            title_bg_height,
+                            title_full, # Sadece metin kısmını gönder
+                            target_w - 80, # Daha geniş alan bırak (her iki yandan 40px boşluk)
+                            title_bg_height, # Yüksekliği arka plan yüksekliğiyle aynı tut
                             font_size=90,
                             main_font_path='DynaPuff/static/DynaPuff-Regular.ttf', # Ana fontu belirle
                             output_folder=output_dir # Test görüntüsünü kaydetmek için klasör yolunu ilet
                         )
-                        print(f"Type of 'text_image_np' before ImageClip: {type(text_image_np)}") # DEBUG Print
-                        
-                        # Görüntüyü ImageClip'e dönüştür
                         txt_clip = ImageClip(text_image_np)
                         txt_clip = txt_clip.set_duration(clip_duration)
                         txt_clip = txt_clip.set_position(('center', 50))
@@ -1038,7 +996,6 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                         title_bg = title_bg.crossfadein(fade_duration)
                         title_bg = title_bg.crossfadeout(fade_duration)
 
-                        # Önce arka planı, sonra metni ekle
                         overlay_clips_for_this_short.append(title_bg)
                         overlay_clips_for_this_short.append(txt_clip)
 
@@ -1048,20 +1005,74 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                         import traceback
                         traceback.print_exc()
                         print("Başlık olmadan devam ediliyor...")
+                        # Başlık olmadan devam etmek için varsayılan çıktı klasörü oluştur
+                        timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_dir = os.path.join('.', f"shorts_output_{timestamp}")
+                        os.makedirs(output_dir, exist_ok=True)
 
                 # Tüm klipleri birleştir
                 final_clips_list = [bg_combined, clip] + overlay_clips_for_this_short
+
+                # Altyazıları ekle (eğer srt_path varsa)
+                if srt_path and os.path.exists(srt_path):
+                    print(f"  Altyazılar {srt_path} dosyasından alınıyor...")
+                    with open(srt_path, 'r', encoding='utf-8') as f:
+                        full_subs = list(srt.parse(f.read()))
+
+                    # Sadece mevcut klibin zaman aralığına düşen altyazıları filtrele
+                    relevant_subs = [
+                        sub for sub in full_subs
+                        if not (sub.end.total_seconds() < start_time or sub.start.total_seconds() > end_time)
+                    ]
+                    print(f"  Klip için {len(relevant_subs)} altyazı segmenti bulundu.")
+
+                    for sub in relevant_subs:
+                        sub_start = sub.start.total_seconds() - start_time # Klibin başlangıcına göre ayarla
+                        sub_end = sub.end.total_seconds() - start_time     # Klibin başlangıcına göre ayarla
+                        
+                        # Altyazı klibi oluşturma sırasında geçerli zaman aralığı kontrolü
+                        if sub_end <= sub_start:
+                            continue # Geçersiz süre, atla
+
+                        # Metni MoviePy TextClip için yeniden paketle
+                        wrapped_sub_text = textwrap.fill(sub.content, width=40) # Altyazı satır uzunluğunu sınırla
+
+                        # Altyazı için arka plan
+                        sub_bg_height = 80
+                        sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 128))
+                        sub_bg = sub_bg.set_duration(sub_end - sub_start)
+                        sub_bg = sub_bg.set_start(sub_start)
+                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 50))
+                        
+                        sub_txt_clip = TextClip(
+                            wrapped_sub_text,
+                            fontsize=50, # Font boyutunu büyüttük
+                            color='white',
+                            font='Arial-Bold', # Kalın font stili
+                            stroke_color='black',
+                            stroke_width=2,
+                            method='caption', # Metni daha iyi sarmak için
+                            size=(target_w - 40, None) # Genişliği sınırla
+                        )
+                        sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
+                        sub_txt_clip = sub_txt_clip.set_start(sub_start)
+                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 50 + 10))
+                        
+                        # Animasyon ekle (fade in/out)
+                        fade_duration = 0.2 # Hızlı geçiş
+                        sub_bg = sub_bg.crossfadein(fade_duration).crossfadeout(fade_duration)
+                        sub_txt_clip = sub_txt_clip.crossfadein(fade_duration).crossfadeout(fade_duration)
+
+                        final_clips_list.append(sub_bg)
+                        final_clips_list.append(sub_txt_clip)
 
                 # CompositeVideoClip oluştur
                 final_clip = CompositeVideoClip(
                     final_clips_list,
                     size=(target_w, target_h)
                 ).set_duration(clip_duration)
-
+                
                 # Klibi kaydet
-                # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # Zaten yukarıda tanımlandı
-                # Başlıktan güvenli bir dosya adı oluştur # Zaten yukarıda tanımlandı
-                # output_path = f'{video_id}_{safe_title}_{timestamp}.mov' # Klasör yolunu da dahil et
                 output_path = os.path.join(output_dir, f'{video_id}_{safe_title}_{timestamp}.mov')
                 print(f"\nKısa video kaydediliyor: {output_path}")
                 
@@ -1205,6 +1216,109 @@ def check_ttml_subtitle(video_path):
         print(f"TTML kontrol hatası: {str(e)}")
         return None
 
+def read_srt_file(file_path):
+    """SRT dosyasını okur ve tüm metni birleştirir"""
+    try:
+        print(f"\nSRT dosyası okunuyor: {file_path}")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            subs = list(srt.parse(f.read()))
+        
+        full_text = " ".join([s.content for s in subs])
+        print(f"SRT metin uzunluğu: {len(full_text)} karakter")
+        return full_text
+    except Exception as e:
+        print(f"SRT dosyası okuma hatası: {str(e)}")
+        return ""
+
+def transcribe_audio(video_path, language=None):
+    """Whisper kullanarak videodaki konuşmaları transkript eder"""
+    try:
+        print("\nKonuşmalar transkript ediliyor...")
+        
+        # Whisper modelini yükle
+        model = WhisperModel("large-v3", device="cuda" if torch.cuda.is_available() else "cpu", compute_type="float32")
+        
+        # Videodan ses dosyasını çıkar
+        audio_path = "temp_audio.wav"
+        video = VideoFileClip(video_path)
+        video.audio.write_audiofile(audio_path, codec='pcm_s16le')
+        
+        # Transkript yap
+        print("\nSes transkripsiyonu başlatılıyor...")
+        segments, info = model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=5,
+            word_timestamps=True
+        )
+        
+        # SRT formatında altyazı oluştur
+        subs = []
+        for i, segment in enumerate(segments):
+            print(f"  Segment {i+1} işleniyor: [{segment.start:.2f}s - {segment.end:.2f}s] - {segment.text[:50]}...") # Yeni satır
+            start_time = dt.timedelta(seconds=segment.start)
+            end_time = dt.timedelta(seconds=segment.end)
+            
+            sub = srt.Subtitle(
+                index=i+1,
+                start=start_time,
+                end=end_time,
+                content=segment.text.strip()
+            )
+            subs.append(sub)
+        
+        # SRT dosyasını kaydet
+        srt_path = os.path.splitext(video_path)[0] + ".srt"
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt.compose(subs))
+        
+        # Geçici ses dosyasını sil
+        os.remove(audio_path)
+        
+        print(f"✓ Transkript tamamlandı! Altyazı dosyası kaydedildi: {srt_path}")
+        return srt_path
+        
+    except Exception as e:
+        print(f"Transkript hatası: {str(e)}")
+        return None
+
+def create_subtitle_clip(text, start_time, end_time, video_size):
+    """Altyazı klibi oluşturur"""
+    try:
+        # Altyazı için arka plan
+        bg_height = 80
+        bg = ColorClip(size=(video_size[0], bg_height), color=(0, 0, 0, 128))
+        bg = bg.set_duration(end_time - start_time)
+        bg = bg.set_start(start_time)
+        bg = bg.set_position(('center', video_size[1] - bg_height - 50))
+        
+        # Altyazı metni
+        # Metni daha kısa satırlara böl (MoviePy'nin TextClip'i için)
+        wrapped_text = textwrap.fill(text, width=40) # Satır uzunluğunu 40 karakterle sınırla
+        
+        txt_clip = TextClip(
+            wrapped_text,
+            fontsize=50, # Font boyutunu büyüttük
+            color='white',
+            font='Arial-Bold', # Kalın font stili
+            stroke_color='black',
+            stroke_width=2
+        )
+        txt_clip = txt_clip.set_duration(end_time - start_time)
+        txt_clip = txt_clip.set_start(start_time)
+        txt_clip = txt_clip.set_position(('center', video_size[1] - bg_height - 50 + 10)) # Konumu ayarladık
+        
+        # Animasyon ekle (fade in/out)
+        fade_duration = 0.3 # Hızlı geçiş
+        bg = bg.crossfadein(fade_duration).crossfadeout(fade_duration)
+        txt_clip = txt_clip.crossfadein(fade_duration).crossfadeout(fade_duration)
+
+        return [bg, txt_clip]
+        
+    except Exception as e:
+        print(f"Altyazı klibi oluşturma hatası: {str(e)}")
+        return []
+
 def process_local_video(video_path):
     """Yerel videoyu işler"""
     try:
@@ -1213,31 +1327,36 @@ def process_local_video(video_path):
         duration = video.duration
         video.close()
         
-        # Altyazıları çıkar
-        print("\n2. Altyazılar çıkarılıyor...")
+        # Altyazı seçeneği zaten main fonksiyonunda sorulduğu için burada tekrar sormaya gerek yok.
+        # Eğer ana fonksiyondan buraya altyazı_seçimi ve dil_seçimi bilgisi geliyorsa kullanılabilir.
         
-        # Önce TTML dosyasını kontrol et
-        subtitles = check_ttml_subtitle(video_path)
-        
-        # TTML yoksa hardcoded tarama yap
-        if not subtitles:
-            print("TTML altyazı dosyası bulunamadı, video içindeki altyazılar taranıyor...")
-            subtitles = extract_hardcoded_subtitles(video_path)
-        
-        if subtitles:
-            print(f"✓ Altyazılar çıkarıldı! (Uzunluk: {len(subtitles)} karakter)")
-        else:
-            print("! Altyazı bulunamadı, içerik analizi altyazısız yapılacak")
-        
+        srt_path = None
+        subtitles_text = ""
+
+        # Eğer daha önce altyazı oluşturma seçeneği seçildiyse
+        # Bu kısım main fonksiyonundan çağrıldığı için burada global bir değişkene veya fonksiyona parametreye ihtiyacımız var.
+        # Basitlik için, bu fonksiyonu ana fonksiyondan çağırırken altyazı ve dil seçeneklerini doğrudan alacağız.
+
         # İçeriği analiz et
+        print("\nİçerik analiz ediliyor...")
+        print("OpenAI API'ye istek gönderiliyor...")
+
+        # process_local_video fonksiyonu main fonksiyonundaki logic'e göre revize edildi.
+        # Artık bu fonksiyon, altyazı oluşturma ve analiz etme adımlarını kendisi yapmayacak.
+        # Bunun yerine, main fonksiyonu tarafından çağrıldığında altyazı metni zaten belirlenmiş olacak.
+        # Bu nedenle, bu fonksiyonun parametrelerini ve çağrılma şeklini değiştirmemiz gerekecek.
+        # Şimdilik bu fonksiyonu altyazı logic'inden ayırıyorum.
+
+        # Sadece altyazısız veya var olan altyazıyla shorts oluşturma logic'i kalacak.
+        # Bu kısım ana fonksiyonda tekrar düzenlenecek.
         print("\n3. İçerik analiz ediliyor...")
         print("OpenAI API'ye istek gönderiliyor...")
-        viral_parts = analyze_content(subtitles, duration)
+        viral_parts = analyze_content(subtitles_text, duration) # subtitles_text parametre olarak gelmeli
         print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
         
         # Shorts videoları oluştur
         print("\n4. Shorts videoları oluşturuluyor...")
-        create_shorts(video_path, viral_parts, False)
+        create_shorts(video_path, viral_parts, srt_path=srt_path) # srt_path de buraya parametre olarak gelmeli
         print("✓ Shorts videoları oluşturuldu!")
         
     except Exception as e:
@@ -1248,8 +1367,9 @@ def main():
     print("\n=== Video İşleme Programı ===")
     print("1. YouTube'dan video indir")
     print("2. Hazır videoyu işle")
+    print("3. Çıkış")
     
-    choice = input("\nSeçiminiz (1/2): ").strip()
+    choice = input("\nSeçiminiz (1/2/3): ").strip()
     
     if choice == "1":
         # YouTube URL'sini al
@@ -1257,32 +1377,75 @@ def main():
         
         # Altyazı seçeneği
         print("\nAltyazı seçenekleri:")
-        print("1. Türkçe altyazı (varsa)")
-        print("2. İngilizce altyazı (varsa)")
-        print("3. Otomatik altyazı (varsa)")
-        print("4. Konuşma altyazısı olmadan devam et")
+        print("1. Whisper ile otomatik altyazı oluştur")
+        print("2. Altyazısız devam et")
         
-        subtitle_choice = input("\nAltyazı seçiminiz (1/2/3/4): ").strip()
+        subtitle_choice = input("\nAltyazı seçiminiz (1/2): ").strip()
+        
+        # Dil seçimi
+        selected_language = None
+        if subtitle_choice == "1":
+            print("\nDil seçenekleri:")
+            print("1. Otomatik algıla")
+            print("2. Türkçe")
+            print("3. İngilizce")
+            print("4. Almanca")
+            print("5. Fransızca")
+            print("6. İspanyolca")
+            print("7. İtalyanca")
+            print("8. Rusça")
+            print("9. Arapça")
+            print("10. Japonca")
+            print("11. Korece")
+            print("12. Çince")
+            
+            lang_choice = input("\nDil seçiminiz (1-12): ").strip()
+            
+            language_map = {
+                "2": "tr",
+                "3": "en",
+                "4": "de",
+                "5": "fr",
+                "6": "es",
+                "7": "it",
+                "8": "ru",
+                "9": "ar",
+                "10": "ja",
+                "11": "ko",
+                "12": "zh"
+            }
+            
+            if lang_choice != "1":
+                selected_language = language_map.get(lang_choice)
+                if not selected_language:
+                    print("Geçersiz dil seçimi! Otomatik algılama kullanılacak.")
         
         # Videoyu indir
         print("\n1. Video indiriliyor...")
-        video_path, info = download_video(url, subtitle_choice)
+        video_path, info = download_video(url)
         print("✓ Video indirildi!")
         
-        # Altyazıları çıkar
-        print("\n2. Altyazılar çıkarılıyor...")
-        subtitles, show_subtitles = extract_subtitles(info, subtitle_choice)
-        print(f"✓ Altyazılar çıkarıldı! (Uzunluk: {len(subtitles)} karakter)")
+        srt_path = None
+        subtitles_text = ""
+
+        if subtitle_choice == "1":
+            # Whisper ile transkript yap
+            print("\n2. Konuşmalar transkript ediliyor...")
+            srt_path = transcribe_audio(video_path, selected_language)
+            
+            if srt_path:
+                # SRT metnini oku
+                subtitles_text = read_srt_file(srt_path)
         
         # İçeriği analiz et
         print("\n3. İçerik analiz ediliyor...")
         print("OpenAI API'ye istek gönderiliyor...")
-        viral_parts = analyze_content(subtitles, info.get('duration', 0))
+        viral_parts = analyze_content(subtitles_text, info.get('duration', 0))
         print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
         
         # Shorts videoları oluştur
         print("\n4. Shorts videoları oluşturuluyor...")
-        create_shorts(video_path, viral_parts, show_subtitles)
+        create_shorts(video_path, viral_parts, srt_path=srt_path) # srt_path de buraya parametre olarak gelmeli
         print("✓ Shorts videoları oluşturuldu!")
         
     elif choice == "2":
@@ -1296,11 +1459,84 @@ def main():
         print("\n1. Video dosyası kontrol ediliyor...")
         print("✓ Video dosyası bulundu!")
         
-        # Videoyu işle
-        process_local_video(video_path)
+        # Altyazı seçeneği
+        print("\nAltyazı seçenekleri:")
+        print("1. Whisper ile otomatik altyazı oluştur")
+        print("2. Altyazısız devam et")
         
+        subtitle_choice = input("\nAltyazı seçiminiz (1/2): ").strip()
+        
+        # Dil seçimi
+        selected_language = None
+        if subtitle_choice == "1":
+            print("\nDil seçenekleri:")
+            print("1. Otomatik algıla")
+            print("2. Türkçe")
+            print("3. İngilizce")
+            print("4. Almanca")
+            print("5. Fransızca")
+            print("6. İspanyolca")
+            print("7. İtalyanca")
+            print("8. Rusça")
+            print("9. Arapça")
+            print("10. Japonca")
+            print("11. Korece")
+            print("12. Çince")
+            
+            lang_choice = input("\nDil seçiminiz (1-12): ").strip()
+            
+            language_map = {
+                "2": "tr",
+                "3": "en",
+                "4": "de",
+                "5": "fr",
+                "6": "es",
+                "7": "it",
+                "8": "ru",
+                "9": "ar",
+                "10": "ja",
+                "11": "ko",
+                "12": "zh"
+            }
+            
+            if lang_choice != "1":
+                selected_language = language_map.get(lang_choice)
+                if not selected_language:
+                    print("Geçersiz dil seçimi! Otomatik algılama kullanılacak.")
+        
+        srt_path = None
+        subtitles_text = ""
+
+        if subtitle_choice == "1":
+            # Whisper ile transkript yap
+            print("\n2. Konuşmalar transkript ediliyor...")
+            srt_path = transcribe_audio(video_path, selected_language)
+            
+            if srt_path:
+                # SRT metnini oku
+                subtitles_text = read_srt_file(srt_path)
+        
+        # Video bilgilerini al
+        video = VideoFileClip(video_path)
+        duration = video.duration
+        video.close()
+
+        # İçeriği analiz et
+        print("\n3. İçerik analiz ediliyor...")
+        print("OpenAI API'ye istek gönderiliyor...")
+        viral_parts = analyze_content(subtitles_text, duration) # subtitles_text parametre olarak gelmeli
+        print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
+        
+        # Shorts videoları oluştur
+        print("\n4. Shorts videoları oluşturuluyor...")
+        create_shorts(video_path, viral_parts, srt_path=srt_path) # srt_path de buraya parametre olarak gelmeli
+        print("✓ Shorts videoları oluşturuldu!")
+        
+    elif choice == "3":
+        print("Programdan çıkılıyor...")
+        return
     else:
-        print("Geçersiz seçim! Lütfen 1 veya 2 girin.")
+        print("Geçersiz seçim! Lütfen 1, 2 veya 3 girin.")
         return
     
     print("\nİşlem tamamlandı!")

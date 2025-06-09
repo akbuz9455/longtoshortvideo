@@ -198,3 +198,5 @@ cython_debug/
 *.mp3
 *.m4a
 *.mov
+*.srt
+*.png
