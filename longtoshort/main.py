@@ -7,13 +7,14 @@ import json
 import re
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
 from moviepy.config import change_settings
 import textwrap
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import subprocess
+import emoji
 
 # FFmpeg yolunu ekle
 os.environ["PATH"] += os.pathsep + r"D:\ffmpeg\bin"
@@ -39,14 +40,14 @@ except Exception as e:
     print(f"ImageMagick font listesi alınamadı: {str(e)}")
 
 # Font ayarlarını güncelle
-os.environ['IMAGEMAGICK_FONT'] = font_path
-os.environ['IMAGEMAGICK_FONT_PATH'] = os.path.dirname(font_path)
+os.environ['IMAGEMAGICK_FONT'] = 'Arial'
+os.environ['IMAGEMAGICK_FONT_PATH'] = r"C:\Windows\Fonts"
 
 # MoviePy font ayarlarını güncelle
 change_settings({
     "IMAGEMAGICK_BINARY": IMAGEMAGICK_BINARY,
-    "IMAGEMAGICK_FONT": font_path,
-    "IMAGEMAGICK_FONT_PATH": os.path.dirname(font_path)
+    "IMAGEMAGICK_FONT": 'Arial',
+    "IMAGEMAGICK_FONT_PATH": r"C:\Windows\Fonts"
 })
 
 # .env dosyasından API anahtarlarını yükle
@@ -327,37 +328,33 @@ def extract_subtitles(info, subtitle_choice='1'):
         traceback.print_exc()
         return "", False  # Altyazıları gösterme
 
-def smart_wrap_text(text, max_chars=30):
-    """Metni akıllıca satırlara böler"""
-    words = text.split()
+def smart_wrap_text(text, font, max_width):
+    """Metni piksel genişliğine göre akıllıca satırlara böler"""
     lines = []
-    current_line = []
-    current_length = 0
+    current_line_words = []
     
+    # Create a dummy ImageDraw object to measure text width
+    dummy_img = Image.new('RGBA', (1, 1))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+
+    words = text.split()
     for word in words:
-        word_length = len(word)
-        # Eğer kelime çok uzunsa, kendisi bir satır olsun
-        if word_length > max_chars:
-            if current_line:
-                lines.append(' '.join(current_line))
-                current_line = []
-                current_length = 0
-            lines.append(word)
-            continue
-            
-        # Eğer mevcut satıra eklenirse max_chars'ı aşmayacaksa
-        if current_length + word_length + len(current_line) <= max_chars:
-            current_line.append(word)
-            current_length += word_length
+        test_line = " ".join(current_line_words + [word])
+        # Calculate text width using the font
+        bbox = dummy_draw.textbbox((0,0), test_line, font=font)
+        text_width = bbox[2] - bbox[0]
+
+        if text_width <= max_width:
+            current_line_words.append(word)
         else:
-            # Mevcut satırı kaydet ve yeni satıra başla
-            lines.append(' '.join(current_line))
-            current_line = [word]
-            current_length = word_length
-    
-    # Son satırı ekle
-    if current_line:
-        lines.append(' '.join(current_line))
+            if current_line_words: # Add the current line if it's not empty
+                lines.append(" ".join(current_line_words))
+            
+            # Start a new line with the current word
+            current_line_words = [word]
+            
+    if current_line_words:
+        lines.append(" ".join(current_line_words))
     
     return '\n'.join(lines)
 
@@ -423,7 +420,8 @@ def analyze_content(text, duration):
     1. Her kısım 15-120 saniye arası olmalı
     2. Tam olarak {video_count} kısım belirle
     3. Başlıklar şu özelliklere sahip olmalı:
-       - İçerikle tamamen ilgili olmalı
+       - Seçilen kısımdaki içerikle TAMAMEN ilgili olmalı
+       - Seçilen kısımdaki konuşmanın ana fikrini yansıtmalı
        - İlgi çekici ve tıklama isteği uyandırmalı
        - Kısa ve öz olmalı (en fazla 50 karakter)
        - Clickbait tarzında ama yanıltıcı olmamalı
@@ -432,7 +430,7 @@ def analyze_content(text, duration):
        - Türkçe karakterler kullan (ç, ş, ı, ğ, ü, ö)
        - Büyük harfle başla
     4. Her kısım için açıklama şu özelliklere sahip olmalı:
-       - Kısımda ne anlatıldığını özetle
+       - Seçilen kısımda ne anlatıldığını özetle
        - En fazla 100 karakter
        - Türkçe karakterler kullan
     5. Sadece JSON array döndür, başka açıklama ekleme
@@ -443,6 +441,8 @@ def analyze_content(text, duration):
     10. start değeri her zaman end değerinden küçük olmalı
     11. Tüm süreler video süresi ({duration} saniye) içinde olmalı
     12. Her kısım için başlık ve açıklama altyazı metninden alınmalı
+    13. Kısımları sıralı seçme, en ilgi çekici ve viral olabilecek kısımları seç
+    14. Her kısım için başlık, o kısımdaki içerikle doğrudan ilgili olmalı
 
     Altyazı:
     {text}
@@ -755,76 +755,141 @@ def convert_vtt_time_to_seconds(time_str):
         print(f"Zaman dönüştürme hatası: {str(e)}")
         return 0.0
 
-def create_subtitle_clip(text, start_time, end_time, target_w, target_h, clip_duration, font_path):
-    """Altyazı klibi oluşturur"""
-    # Metni akıllıca satırlara böl
-    wrapped_text = smart_wrap_text(text, max_chars=30)  # Daha kısa satırlar
+def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuff/static/DynaPuff-Regular.ttf'):
+    """PIL kullanarak metin görüntüsü oluşturur"""
+    # try: # Geçici olarak kaldırıldı
+        # Ana font dosyasının varlığını kontrol et
+    if not os.path.exists(main_font_path):
+        print(f"HATA: Ana font dosyası bulunamadı: {main_font_path}")
+        raise FileNotFoundError(f"Ana font dosyası bulunamadı: {main_font_path}")
+
+    emoji_font_path = 'Noto_Color_Emoji/NotoColorEmoji-Regular.ttf'
+    emoji_font = None
+    has_emojis = emoji.emoji_count(text) > 0
     
-    # Eğer metin çok kısaysa, minimum süre uygula
-    min_duration = 1.5  # Minimum 1.5 saniye
-    if end_time - start_time < min_duration:
-        end_time = start_time + min_duration
+    # Emoji fontunu yüklemeye çalış
+    if has_emojis and os.path.exists(emoji_font_path):
+        try:
+            # Emoji fontu ana font boyutuyla yüklensin
+            emoji_font = ImageFont.truetype(emoji_font_path, font_size)
+            print(f"Emoji fontu başarıyla yüklendi: {emoji_font_path}")
+        except Exception as e:
+            print(f"Emoji fontu yüklenirken hata: {str(e)}. Emoji fontu kullanılamayacak.")
+            emoji_font = None # Yüklenemezse fallback
+    else:
+        print(f"Metindeki emoji sayısı: {emoji.emoji_count(text)}")
+        print(f"Emoji fontu ({emoji_font_path}) var mı: {os.path.exists(emoji_font_path)}")
+        if not has_emojis:
+            print("Metinde emoji algılanmadı.")
+        elif not os.path.exists(emoji_font_path):
+            print("Emoji font dosyası bulunamadı.")
+
+    current_font_size = font_size
+    max_attempts = 10
     
-    try:
-        # Font dosyasının varlığını kontrol et
-        if not os.path.exists(font_path):
-            print(f"Uyarı: Font dosyası bulunamadı: {font_path}")
-            raise FileNotFoundError(f"Font dosyası bulunamadı: {font_path}")
+    # Metin sığana kadar font boyutunu küçült (ana font ile ölçüm yaparak)
+    main_font_for_sizing = None
+    for attempt in range(max_attempts):
+        try:
+            main_font_for_sizing = ImageFont.truetype(main_font_path, current_font_size)
             
-        # Font dosyasını kullan
-        txt_clip = TextClip(
-            wrapped_text,
-            fontsize=75,
-            color='white',
-            font='ITCKRIST',  # Font adını kullan
-            stroke_color='white',
-            stroke_width=0,
-            method='caption',
-            align='center',
-            size=(target_w - 100, None)
-        )
-        print(f"Altyazı klibi oluşturuldu, font: ITCKRIST")
-    except Exception as e:
-        print(f"Altyazı klibi oluşturulurken hata: {str(e)}")
-        print(f"Kullanılan font: ITCKRIST")
-        raise
+            # Metni mevcut ana font boyutuyla ölç
+            wrapped_text = smart_wrap_text(text, main_font_for_sizing, width)
+            lines = wrapped_text.split('\n')
+            
+            total_text_height = 0
+            max_line_width = 0
+            for line in lines:
+                bbox = main_font_for_sizing.getbbox(line)
+                line_height = bbox[3] - bbox[1]
+                line_width = bbox[2] - bbox[0]
+                total_text_height += line_height
+                if line_width > max_line_width:
+                    max_line_width = line_width
+            total_text_height += (len(lines) - 1) * 10 # Satır arası boşluk
 
-    # Altyazı klibinin süresini ayarla
-    actual_duration = end_time - start_time
-    txt_clip = txt_clip.set_duration(actual_duration)
+            # Metnin sığıp sığmadığını kontrol et
+            if max_line_width <= width and total_text_height <= height:
+                print(f"Metin başarıyla sığdırıldı. Font Boyutu: {current_font_size}, Genişlik: {max_line_width}/{width}, Yükseklik: {total_text_height}/{height}")
+                break
+            else:
+                if current_font_size > 10: # Minimum font boyutu
+                    current_font_size -= 5
+                    print(f"Metin sığmadı, font boyutu düşürülüyor: {current_font_size}")
+                else:
+                    print("Minimum font boyutuna ulaşıldı, metin hala sığmıyor.")
+                    break
+        except Exception as e:
+            print(f"Deneme {attempt+1}: Font boyutlandırma sırasında hata: {str(e)}")
+            if current_font_size > 10:
+                current_font_size -= 5
+                continue
+            raise
 
-    # Altyazıyı ana videonun altına yerleştir
-    subtitle_bottom_offset = 80 # Alttan 80px yukarıda (daha aşağıda)
-    y_position = target_h - subtitle_bottom_offset - txt_clip.h
 
-    # Altyazıyı doğru zamanda başlat
-    txt_clip = txt_clip.set_start(start_time)
-    txt_clip = txt_clip.set_position(('center', y_position))
+    if main_font_for_sizing is None:
+        raise Exception("Ana font yüklenemedi veya boyutlandırılamadı.")
 
-    # Fade efekti için süreleri ayarla
-    fade_duration = 0.2  # Fade süresi
+    # Son seçilen font boyutuyla ana fontu ve emoji fontunu yeniden yükle
+    final_main_font = ImageFont.truetype(main_font_path, current_font_size)
+    final_emoji_font = None
+    if has_emojis and os.path.exists(emoji_font_path):
+            try:
+                final_emoji_font = ImageFont.truetype(emoji_font_path, current_font_size)
+            except Exception as e:
+                print(f"Final emoji fontu yüklenirken hata: {str(e)}")
 
-    # Giriş ve çıkış fade efektlerini uygula
-    txt_clip = txt_clip.crossfadein(fade_duration)
-    txt_clip = txt_clip.crossfadeout(fade_duration)
 
-    return txt_clip
+    # Son görüntüyü oluştur
+    image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
 
+    # Metni dikeyde ortala
+    y_position = (height - total_text_height) // 2
+    if y_position < 0:
+        y_position = 0
+
+    current_y = y_position
+    
+    # Her satırı karakter karakter çiz
+    for line in lines:
+        # Satırın yatayda ortalanması için başlangıç noktası
+        line_width = final_main_font.getbbox(line)[2] - final_main_font.getbbox(line)[0]
+        x = (width - line_width) // 2
+        
+        current_x = x
+        for char in line:
+            if emoji.is_emoji(char) and final_emoji_font: # Eğer karakter emoji ise ve emoji fontu varsa
+                char_bbox = final_emoji_font.getbbox(char)
+                char_width = char_bbox[2] - char_bbox[0]
+                draw.text((current_x, current_y), char, font=final_emoji_font, fill='white', stroke_width=2, stroke_fill='black')
+            else: # Değilse veya emoji fontu yoksa ana fontu kullan
+                char_bbox = final_main_font.getbbox(char)
+                char_width = char_bbox[2] - char_bbox[0]
+                draw.text((current_x, current_y), char, font=final_main_font, fill='white', stroke_width=2, stroke_fill='black')
+            current_x += char_width # Bir sonraki karakter için x konumunu ilerlet
+        
+        # Bir sonraki satır için y konumunu ilerlet
+        current_y += (final_main_font.getbbox(line)[3] - final_main_font.getbbox(line)[1]) + 10 # Satır yüksekliği + boşluk
+
+    # Görüntüyü kaydet (test için)
+    test_image_path = 'test_text.png'
+    image.save(test_image_path)
+    print(f"Test görüntüsü kaydedildi: {test_image_path}")
+    print(f"Type of 'image' before np.array: {type(image)}") # DEBUG Print
+        
+    return np.array(image) # Numpy array olarak döndür
+        
+    # except Exception as e: # Geçici olarak kaldırıldı
+    #     print(f"Metin görüntüsü oluşturulurken hata: {str(e)}")
+    #     print("Hata detayları:")
+    #     import traceback
+    #     traceback.print_exc()
+    #     raise # Hatanın tekrar fırlatılması
+    
 def create_shorts(video_path, viral_parts, show_subtitles=True):
     """Viral kısımlardan Shorts videoları oluşturur"""
     try:
-        # Font dosyasının tam yolunu belirle ve kontrol et
-        font_path = os.path.abspath('DynaPuff.ttf')
-        if not os.path.exists(font_path):
-            print(f"Uyarı: Font dosyası bulunamadı: {font_path}")
-            print("Mevcut dizindeki dosyalar:")
-            print(os.listdir('.'))
-            raise FileNotFoundError(f"Font dosyası bulunamadı: {font_path}")
-        print(f"Kullanılan font dosyası: {font_path}")
-        
-        # ImageMagick için font adını ayarla
-        font_name = "DynaPuff"  # ImageMagick için font adı
-        
         # Video uzantısını kontrol et ve gerekirse değiştir
         video_path_without_ext = os.path.splitext(video_path)[0]
         if not os.path.exists(video_path):
@@ -856,12 +921,21 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
         w, h = video.size
         target_w, target_h = 1080, 1920  # Shorts için hedef boyutlar
         
+        # Viral kısımları sırala (en ilgi çekici olanlar önce)
+        viral_parts.sort(key=lambda x: x.get('start_time', 0))
+        
         for i, part in enumerate(viral_parts):
             try:
-                # Cümlenin başladığı zamandan başla
-                start_time = part.get('sentence_start', part['start_time'])
+                # Viral kısımın başlangıç ve bitiş zamanlarını al
+                start_time = part['start_time']
                 end_time = part['end_time']
                 clip_duration = end_time - start_time
+                
+                print(f"\nViral kısım {i+1} işleniyor:")
+                print(f"Başlangıç: {start_time:.2f} saniye")
+                print(f"Bitiş: {end_time:.2f} saniye")
+                print(f"Süre: {clip_duration:.2f} saniye")
+                print(f"Başlık: {part.get('title', 'Başlıksız')}")
                 
                 # Kısa video klibi oluştur
                 clip = video.subclip(start_time, end_time)
@@ -870,19 +944,10 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                 clip = clip.volumex(1.75)
                 
                 # Arka plan videosunu hazırla
-                # Gerekli tekrar sayısını hesapla
                 repeat_count = int(clip_duration / bg_duration) + 1
-                bg_clips = []
-                
-                for _ in range(repeat_count):
-                    bg_clips.append(bg_video)
-                
-                # Arka plan videolarını birleştir
+                bg_clips = [bg_video] * repeat_count
                 bg_combined = concatenate_videoclips(bg_clips)
-                # Kırp
                 bg_combined = bg_combined.subclip(0, clip_duration)
-                
-                # Arka plan videosunun sesini kapat
                 bg_combined = bg_combined.without_audio()
                 
                 # Arka plan videosunu dikey formata dönüştür
@@ -894,139 +959,92 @@ def create_shorts(video_path, viral_parts, show_subtitles=True):
                     bg_combined = bg_combined.crop(x1=x1, y1=0, x2=x2, y2=target_h)
                 
                 # Ana videoyu dikey formata dönüştür
-                # Videoyu hedef yüksekliğin %65'ine göre yeniden boyutlandır
                 clip = clip.resize(height=int(target_h * 0.65))
-                
-                # Videoyu alttan başlayarak ortala ve biraz daha yukarı taşı
-                y_position = target_h - clip.h - 250  # Ana video dikey pozisyonu
+                y_position = target_h - clip.h - 250
                 clip = clip.set_position(('center', y_position))
 
-                # Bu kısa video klibi için overlay kliplerini (başlık) tutacak liste
+                # Overlay kliplerini tutacak liste
                 overlay_clips_for_this_short = []
 
                 # Başlık ekle
                 title = part.get('title', '')
                 if title:
                     try:
-                        # Başlığı akıllıca satırlara böl
-                        wrapped_title = smart_wrap_text(title)
-                        lines = wrapped_title.count('\n') + 1
-
-                        # Başlık metni klibini oluştur
-                        try:
-                            # Font dosyasını kullan
-                            txt_clip = TextClip(
-                                wrapped_title,
-                                fontsize=75,
-                                color='white',
-                                font='ITCKRIST',  # Font adını kullan
-                                stroke_color='black',
-                                stroke_width=0,
-                                method='caption',
-                                align='center',
-                                size=(target_w - 100, None)
-                            )
-                            print(f"Başlık klibi oluşturuldu, font: ITCKRIST")
-                        except Exception as e:
-                            print(f"Başlık klibi oluşturulurken hata: {str(e)}")
-                            print(f"Kullanılan font: ITCKRIST")
-                            raise
-
-                        # Başlık metninin kendi dikey pozisyonunu belirle (ana video tuvaline göre)
-                        if lines == 1:
-                            txt_clip_y = 50 # Konumu ayarladık
-                        elif lines == 2:
-                            txt_clip_y = 75 # Konumu ayarladık
-                        else:
-                            txt_clip_y = 100 # Konumu ayarladık
-
-                        # Başlık arka planı yüksekliğini ve dikey pozisyonunu belirle (ana video tuvaline göre)
-                        bg_padding = 75  # Üstten ve alttan eklenecek boşluk miktarı
-                        bg_height = txt_clip.h + (bg_padding * 2)
-                        bg_y_position = txt_clip_y - bg_padding # Metnin başlangıcından 75px yukarıda başla
-
                         # Başlık için arka plan oluştur
-                        title_bg = ColorClip(size=(target_w, bg_height), color=(0, 0, 0, 60))
-                        title_bg = title_bg.set_duration(clip_duration) # Arka plan süresini ayarla
+                        title_bg_height = 180
+                        title_bg = ColorClip(size=(target_w, title_bg_height), color=(0, 0, 0, 128))
+                        title_bg = title_bg.set_duration(clip_duration)
+                        title_bg = title_bg.set_position(('center', 50))
 
-                        # Başlık metni ve arka planı overlay listesine ekle
-                        # Önce arka planı ekle, sonra metni ekle (arka plan altta kalmalı)
-                        overlay_clips_for_this_short.append(title_bg.set_position(('center', bg_y_position)))
-                        overlay_clips_for_this_short.append(txt_clip.set_position(('center', txt_clip_y)).set_duration(clip_duration)) # Metin süresini ayarla
+                        # PIL ile metin görüntüsü oluştur
+                        text_image_np = create_text_image(
+                            title,
+                            target_w - 120, # Daha geniş alan bırak (her iki yandan 60px boşluk)
+                            title_bg_height,
+                            font_size=90,
+                            main_font_path='DynaPuff/static/DynaPuff-Regular.ttf' # Ana fontu belirle
+                        )
+                        print(f"Type of 'text_image_np' before ImageClip: {type(text_image_np)}") # DEBUG Print
+                        
+                        # Görüntüyü ImageClip'e dönüştür
+                        txt_clip = ImageClip(text_image_np)
+                        txt_clip = txt_clip.set_duration(clip_duration)
+                        txt_clip = txt_clip.set_position(('center', 50))
+
+                        # Fade efektleri
+                        fade_duration = 0.5
+                        txt_clip = txt_clip.crossfadein(fade_duration)
+                        txt_clip = txt_clip.crossfadeout(fade_duration)
+                        title_bg = title_bg.crossfadein(fade_duration)
+                        title_bg = title_bg.crossfadeout(fade_duration)
+
+                        # Önce arka planı, sonra metni ekle
+                        overlay_clips_for_this_short.append(title_bg)
+                        overlay_clips_for_this_short.append(txt_clip)
 
                     except Exception as e:
                         print(f"Başlık eklenirken hata oluştu: {str(e)}")
+                        print("Hata detayları:")
                         import traceback
-                        traceback.print_exc() # Hata detaylarını görmek için eklendi
+                        traceback.print_exc()
                         print("Başlık olmadan devam ediliyor...")
 
                 # Tüm klipleri birleştir
-                # Kliplerin sıralaması önemli: arka plan videosu, ana video klibi, overlay klipleri (başlık)
                 final_clips_list = [bg_combined, clip] + overlay_clips_for_this_short
 
-                print(f"\nKısa video {i+1} için klipler hazırlanıyor...")
-                print(f"Toplam klip sayısı: {len(final_clips_list)}")
-                for idx, cl in enumerate(final_clips_list):
-                    print(f"Klip {idx}: {type(cl).__name__}, Süre: {cl.duration if hasattr(cl, 'duration') else 'Bilinmiyor'}")
+                # CompositeVideoClip oluştur
+                final_clip = CompositeVideoClip(
+                    final_clips_list,
+                    size=(target_w, target_h)
+                ).set_duration(clip_duration)
 
-                try:
-                    # CompositeVideoClip oluşturulmadan önce tüm kliplerin süresini kontrol et
-                    for i, cl in enumerate(final_clips_list):
-                        if cl.duration is None:
-                            print(f"Hata: CompositeVideoClip oluşturulmadan önce {i}. klibin süresi None.")
-                            print(f"Klip türü: {type(cl)}")
-                            if hasattr(cl, 'filename'): 
-                                print(f"Dosya adı: {cl.filename}")
-                            raise ValueError(f"Klip {i} (tipi: {type(cl).__name__}) için süre ayarlanmadı")
-
-                    print("\nCompositeVideoClip oluşturuluyor...")
-                    # CompositeVideoClip oluşturulurken süreyi belirtelim
-                    final_clip = CompositeVideoClip(
-                        final_clips_list,
-                        size=(target_w, target_h)
-                    )
-
-                    # CompositeVideoClip'in süresi bazen otomatik ayarlanmayabilir, manuel olarak belirleyelim
-                    final_clip = final_clip.set_duration(clip_duration)
-                    print("CompositeVideoClip başarıyla oluşturuldu!")
+                # Klibi kaydet
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Başlıktan güvenli bir dosya adı oluştur
+                safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')
+                output_path = f'{video_id}_{safe_title}_{timestamp}.mov'
+                print(f"\nKısa video kaydediliyor: {output_path}")
                 
-                    # Klibi kaydet
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_path = f'{video_id}_short_{i+1}_{timestamp}.mov'
-                    print(f"\nKısa video {i+1} kaydediliyor: {output_path}")
-                    final_clip.write_videofile(
-                        output_path,
-                        codec='libx264',
-                        bitrate='4000k',
-                        audio_codec='aac',
-                        audio_bitrate='192k',
-                        preset='medium',
-                        threads=4,
-                        ffmpeg_params=[
-                            '-crf', '23',
-                            '-movflags', '+faststart'
-                        ]
-                    )
-                    print(f"✓ Kısa video {i+1} kaydedildi!")
-
-                except Exception as e:
-                    print(f"\nKısa video {i+1} oluşturulurken hata: {str(e)}")
-                    print("Hata detayları:")
-                    import traceback
-                    traceback.print_exc()
-                    print("\nKliplerin durumu:")
-                    for idx, cl in enumerate(final_clips_list):
-                        print(f"Klip {idx}: {type(cl).__name__}")
-                        if hasattr(cl, 'duration'):
-                            print(f"  Süre: {cl.duration}")
-                        if hasattr(cl, 'size'):
-                            print(f"  Boyut: {cl.size}")
-                    continue
+                final_clip.write_videofile(
+                    output_path,
+                    codec='libx264',
+                    bitrate='4000k',
+                    audio_codec='aac',
+                    audio_bitrate='192k',
+                    preset='medium',
+                    threads=4,
+                    ffmpeg_params=[
+                        '-crf', '23',
+                        '-movflags', '+faststart'
+                    ]
+                )
+                print(f"✓ Kısa video kaydedildi!")
 
             except Exception as e:
-                print(f"Kısa video {i+1} oluşturulurken hata: {str(e)}")
+                print(f"\nKısa video oluşturulurken hata: {str(e)}")
+                print("Hata detayları:")
                 import traceback
-                traceback.print_exc() # Hata detaylarını görmek için eklendi
+                traceback.print_exc()
                 continue
         
         video.close()
@@ -1248,4 +1266,5 @@ def main():
     print("\nİşlem tamamlandı!")
 
 if __name__ == "__main__":
+    print(os.path.exists('DynaPuff/static/DynaPuff-Regular.ttf'))
     main() 
