@@ -3,4 +3,10 @@ openai==1.12.0
 moviepy==1.0.3
 python-dotenv==1.0.0
 yt-dlp==2024.3.10
-whisper==1.1.10 
+whisper==1.1.10
+opencv-python
+numpy
+pillow
+faster-whisper
+torch
+srt 

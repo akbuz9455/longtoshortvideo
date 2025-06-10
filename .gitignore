@@ -194,3 +194,9 @@ cython_debug/
 .cursorindexingignore
 *.mp4
 *.vtt
+*.ttml
+*.mp3
+*.m4a
+*.mov
+*.srt
+*.png
