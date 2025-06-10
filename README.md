@@ -21,6 +21,13 @@ A powerful tool to convert long videos into engaging short-form content for TikT
 - FFmpeg
 - ImageMagick
 - NVIDIA GPU (optional, for faster processing)
+- Background video (bg.mp4) in 1920x1080 resolution
+- Logo file (logo.png) in 512x512 resolution
+
+### Required Files
+Place these files in the root directory of the project:
+- `bg.mp4`: Background video (1920x1080) from [Pexels](https://www.pexels.com/search/videos/background/) or [Pixabay](https://pixabay.com/videos/search/background/)
+- `logo.png`: Your logo file (512x512)
 
 ## 🚀 Installation
 
@@ -137,4 +144,23 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## ☕ Support
 
 If you find this tool helpful, consider buying me a coffee:
-[Buy Me A Coffee](https://buymeacoffee.com/ramazanserifakbuz) 
+[Buy Me A Coffee](https://buymeacoffee.com/ramazanserifakbuz)
+
+## ⚠️ Known Issues
+
+- Occasional translation errors may occur in certain video types
+- Some subtitle timing issues might need manual adjustment
+- Background video compatibility varies based on source
+
+## 🚧 Upcoming Features ⏳
+
+- [ ] Multi-output format support (TikTok, YouTube Shorts, Instagram Reels simultaneously)
+- [ ] Local video processing improvements
+- [ ] Script-based sharing automation
+- [ ] Advanced automatic editing features
+- [ ] Custom transition effects
+- [ ] Batch processing support
+- [ ] AI-powered content optimization
+- [ ] Social media integration
+- [ ] Custom watermark options
+- [ ] Advanced subtitle styling 
