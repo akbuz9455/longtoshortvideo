@@ -1396,42 +1396,41 @@ def process_local_video(video_path):
         raise
 
 def main():
-    print("\n=== Video İşleme Programı ===")
-    print("1. YouTube'dan video indir")
-    print("2. Hazır videoyu işle")
-    print("3. Çıkış")
+    print("\n=== Video Processing Program ===")
+    print("1. Download from YouTube")
+    print("2. Exit")
     
-    choice = input("\nSeçiminiz (1/2/3): ").strip()
+    choice = input("\nYour choice (1/2): ").strip()
     
     if choice == "1":
-        # YouTube URL'sini al
-        url = input("\nYouTube video URL'sini girin: ")
+        # Get YouTube URL
+        url = input("\nEnter YouTube video URL: ")
         
-        # Altyazı seçeneği
-        print("\nAltyazı seçenekleri:")
-        print("1. Whisper ile otomatik altyazı oluştur")
-        print("2. Altyazısız devam et")
+        # Subtitle options
+        print("\nSubtitle options:")
+        print("1. Generate automatic subtitles with Whisper")
+        print("2. Continue without subtitles")
         
-        subtitle_choice = input("\nAltyazı seçiminiz (1/2): ").strip()
+        subtitle_choice = input("\nYour subtitle choice (1/2): ").strip()
         
-        # Dil seçimi
+        # Language selection
         selected_language = None
         if subtitle_choice == "1":
-            print("\nDil seçenekleri:")
-            print("1. Otomatik algıla")
-            print("2. Türkçe")
-            print("3. İngilizce")
-            print("4. Almanca")
-            print("5. Fransızca")
-            print("6. İspanyolca")
-            print("7. İtalyanca")
-            print("8. Rusça")
-            print("9. Arapça")
-            print("10. Japonca")
-            print("11. Korece")
-            print("12. Çince")
+            print("\nLanguage options:")
+            print("1. Auto-detect")
+            print("2. Turkish")
+            print("3. English")
+            print("4. German")
+            print("5. French")
+            print("6. Spanish")
+            print("7. Italian")
+            print("8. Russian")
+            print("9. Arabic")
+            print("10. Japanese")
+            print("11. Korean")
+            print("12. Chinese")
             
-            lang_choice = input("\nDil seçiminiz (1-12): ").strip()
+            lang_choice = input("\nYour language choice (1-12): ").strip()
             
             language_map = {
                 "2": "tr",
@@ -1450,128 +1449,44 @@ def main():
             if lang_choice != "1":
                 selected_language = language_map.get(lang_choice)
                 if not selected_language:
-                    print("Geçersiz dil seçimi! Otomatik algılama kullanılacak.")
+                    print("Invalid language choice! Using auto-detection.")
         
-        # Videoyu indir
-        print("\n1. Video indiriliyor...")
+        # Download video
+        print("\n1. Downloading video...")
         video_path, info = download_video(url)
-        print("✓ Video indirildi!")
+        print("✓ Video downloaded!")
         
         srt_path = None
         subtitles_text = ""
 
         if subtitle_choice == "1":
-            # Whisper ile transkript yap
-            print("\n2. Konuşmalar transkript ediliyor...")
+            # Generate transcript with Whisper
+            print("\n2. Generating transcript...")
             srt_path = transcribe_audio(video_path, selected_language)
             
             if srt_path:
-                # SRT metnini oku
+                # Read SRT text
                 subtitles_text = read_srt_file(srt_path)
         
-        # İçeriği analiz et
-        print("\n3. İçerik analiz ediliyor...")
-        print("OpenAI API'ye istek gönderiliyor...")
+        # Analyze content
+        print("\n3. Analyzing content...")
+        print("Sending request to OpenAI API...")
         viral_parts = analyze_content(subtitles_text, info.get('duration', 0))
-        print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
+        print(f"✓ Content analyzed! Found {len(viral_parts)} viral segments.")
         
-        # Shorts videoları oluştur
-        print("\n4. Shorts videoları oluşturuluyor...")
-        create_shorts(video_path, viral_parts, srt_path=srt_path) # srt_path de buraya parametre olarak gelmeli
-        print("✓ Shorts videoları oluşturuldu!")
+        # Create short videos
+        print("\n4. Creating short videos...")
+        create_shorts(video_path, viral_parts, srt_path=srt_path)
+        print("✓ Short videos created!")
         
     elif choice == "2":
-        # Yerel video dosyasını al
-        video_path = input("\nVideo dosyasının adını girin (örn: video.mp4): ").strip()
-        
-        if not os.path.exists(video_path):
-            print(f"Hata: {video_path} dosyası bulunamadı!")
-            return
-            
-        print("\n1. Video dosyası kontrol ediliyor...")
-        print("✓ Video dosyası bulundu!")
-        
-        # Altyazı seçeneği
-        print("\nAltyazı seçenekleri:")
-        print("1. Whisper ile otomatik altyazı oluştur")
-        print("2. Altyazısız devam et")
-        
-        subtitle_choice = input("\nAltyazı seçiminiz (1/2): ").strip()
-        
-        # Dil seçimi
-        selected_language = None
-        if subtitle_choice == "1":
-            print("\nDil seçenekleri:")
-            print("1. Otomatik algıla")
-            print("2. Türkçe")
-            print("3. İngilizce")
-            print("4. Almanca")
-            print("5. Fransızca")
-            print("6. İspanyolca")
-            print("7. İtalyanca")
-            print("8. Rusça")
-            print("9. Arapça")
-            print("10. Japonca")
-            print("11. Korece")
-            print("12. Çince")
-            
-            lang_choice = input("\nDil seçiminiz (1-12): ").strip()
-            
-            language_map = {
-                "2": "tr",
-                "3": "en",
-                "4": "de",
-                "5": "fr",
-                "6": "es",
-                "7": "it",
-                "8": "ru",
-                "9": "ar",
-                "10": "ja",
-                "11": "ko",
-                "12": "zh"
-            }
-            
-            if lang_choice != "1":
-                selected_language = language_map.get(lang_choice)
-                if not selected_language:
-                    print("Geçersiz dil seçimi! Otomatik algılama kullanılacak.")
-        
-        srt_path = None
-        subtitles_text = ""
-
-        if subtitle_choice == "1":
-            # Whisper ile transkript yap
-            print("\n2. Konuşmalar transkript ediliyor...")
-            srt_path = transcribe_audio(video_path, selected_language)
-            
-            if srt_path:
-                # SRT metnini oku
-                subtitles_text = read_srt_file(srt_path)
-        
-        # Video bilgilerini al
-        video = VideoFileClip(video_path)
-        duration = video.duration
-        video.close()
-
-        # İçeriği analiz et
-        print("\n3. İçerik analiz ediliyor...")
-        print("OpenAI API'ye istek gönderiliyor...")
-        viral_parts = analyze_content(subtitles_text, duration) # subtitles_text parametre olarak gelmeli
-        print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
-        
-        # Shorts videoları oluştur
-        print("\n4. Shorts videoları oluşturuluyor...")
-        create_shorts(video_path, viral_parts, srt_path=srt_path) # srt_path de buraya parametre olarak gelmeli
-        print("✓ Shorts videoları oluşturuldu!")
-        
-    elif choice == "3":
-        print("Programdan çıkılıyor...")
+        print("Exiting program...")
         return
     else:
-        print("Geçersiz seçim! Lütfen 1, 2 veya 3 girin.")
+        print("Invalid choice! Please enter 1 or 2.")
         return
     
-    print("\nİşlem tamamlandı!")
+    print("\nProcess completed!")
 
 if __name__ == "__main__":
     print(os.path.exists('DynaPuff/static/DynaPuff-Regular.ttf'))
