@@ -43,7 +43,7 @@ pip install -r requirements.txt
 4. Create a `.env` file:
 ```env
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4-turbo-preview
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
 ## 🎥 Usage
