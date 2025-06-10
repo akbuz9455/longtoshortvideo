@@ -1,43 +1,140 @@
 # Long to Short Video Converter
 
-Bu uygulama, uzun YouTube videolarını analiz ederek viral potansiyeli olan kısımları tespit eder ve bunlardan Shorts formatında videolar oluşturur.
+A powerful tool to convert long videos into engaging short-form content for TikTok, YouTube Shorts, and Instagram Reels. No CapCut or premium accounts required!
 
-## Özellikler
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ramazanserifakbuz)
 
-- YouTube videolarını indirme
-- Otomatik altyazı çıkarma
-- ChatGPT ile içerik analizi
-- Viral kısımları tespit etme
-- Shorts formatında video oluşturma
+## 🌟 Features
 
-## Kurulum
+- Convert long YouTube videos to short-form content
+- Automatic subtitle generation with Whisper AI
+- Smart content analysis using OpenAI GPT
+- Multiple language support for subtitles
+- Custom background video support
+- Professional text overlays with animations
+- No watermark or premium account required
+- GPU acceleration support (NVIDIA)
 
-1. Gerekli paketleri yükleyin:
+## 📋 Requirements
+
+- Python 3.8+
+- FFmpeg
+- ImageMagick
+- NVIDIA GPU (optional, for faster processing)
+
+## 🚀 Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/longtoshort.git
+cd longtoshort
+```
+
+2. Install required packages:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. `.env` dosyası oluşturun ve OpenAI API anahtarınızı ekleyin:
-```
-OPENAI_API_KEY=your_api_key_here
+3. Install FFmpeg and ImageMagick:
+- Windows: Download and install from official websites
+- Linux: `sudo apt-get install ffmpeg imagemagick`
+- macOS: `brew install ffmpeg imagemagick`
+
+4. Create a `.env` file:
+```env
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4-turbo-preview
 ```
 
-## Kullanım
+## 🎥 Usage
 
-1. Uygulamayı çalıştırın:
+1. Run the program:
 ```bash
 python main.py
 ```
 
-2. İstendiğinde YouTube video URL'sini girin
-3. Uygulama otomatik olarak:
-   - Videoyu indirecek
-   - Altyazıları çıkaracak
-   - İçeriği analiz edecek
-   - Shorts videoları oluşturacak
+2. Choose your input method:
+   - Download from YouTube
+   - Use local video file
 
-## Gereksinimler
+3. Select subtitle options:
+   - Generate with Whisper AI
+   - Continue without subtitles
 
-- Python 3.8+
-- OpenAI API anahtarı
-- İnternet bağlantısı 
+4. Choose language for subtitles (if using Whisper)
+
+5. Wait for processing:
+   - Video download (if from YouTube)
+   - Subtitle generation
+   - Content analysis
+   - Short video creation
+
+## 🎬 Example
+
+Input: [Long YouTube Video](https://www.youtube.com/watch?v=example)
+Output: [TikTok Short](https://www.tiktok.com/@astrolojiyorumlari/video/7514114086037130497)
+
+## 🔧 System Architecture
+
+### Video Processing
+- Downloads video in highest quality
+- Extracts audio for subtitle generation
+- Analyzes content for viral segments
+- Creates short-form videos with:
+  - Custom background
+  - Positioned main video
+  - Animated text overlays
+  - Generated subtitles
+
+### Background Video
+- Uses a custom background video (bg.mp4)
+- Automatically loops to match content length
+- Resizes and crops for vertical format
+- Applies professional transitions
+
+### Video Positioning
+- Main video positioned at bottom 65% of screen
+- Text overlays at top and bottom
+- Professional padding and spacing
+- Smooth animations and transitions
+
+### Subtitle Generation
+- Uses Whisper AI for accurate transcription
+- Supports multiple languages
+- Automatic timing and positioning
+- Professional styling with background
+
+## 🌐 Supported Platforms
+
+- YouTube to TikTok
+- YouTube to Shorts
+- YouTube to Reels
+- Local video to short-form content
+
+## ⚙️ Technical Details
+
+### Video Output
+- Resolution: 1080x1920 (9:16)
+- Format: MOV
+- Codec: H.264 (NVENC if available)
+- Bitrate: 4000k
+- Audio: AAC 192k
+
+### Text Overlay
+- Custom font support
+- Professional animations
+- Background blur
+- Stroke effects
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## ☕ Support
+
+If you find this tool helpful, consider buying me a coffee:
+[Buy Me A Coffee](https://buymeacoffee.com/ramazanserifakbuz) 
