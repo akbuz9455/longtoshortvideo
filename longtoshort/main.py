@@ -909,6 +909,25 @@ def create_shorts(video_path, viral_parts, srt_path=None):
         w, h = video.size
         target_w, target_h = 1080, 1920  # Shorts için hedef boyutlar
         
+        # Logo yükle ve boyutlandır
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        if os.path.exists(logo_path):
+            try:
+                logo = ImageClip(logo_path)
+                # Logo boyutunu ayarla (video yüksekliğinin %15'i)
+                logo_height = int(target_h * 0.15)
+                logo = logo.resize(height=logo_height)
+                # Logo pozisyonunu ayarla (sol orta)
+                logo = logo.set_position(('left', 'center'))
+                print(f"✓ Logo yüklendi ve boyutlandırıldı: {logo_path}")
+            except Exception as e:
+                print(f"! Logo yüklenirken hata oluştu: {str(e)}")
+                logo = None
+        else:
+            print(f"! Logo dosyası bulunamadı: {logo_path}")
+            print("! Logo dosyası ana dizinde 'logo.png' olarak bulunmalıdır.")
+            logo = None
+        
         # Viral kısımları sırala (en ilgi çekici olanlar önce)
         viral_parts.sort(key=lambda x: x.get('start_time', 0))
         
@@ -953,6 +972,11 @@ def create_shorts(video_path, viral_parts, srt_path=None):
 
                 # Overlay kliplerini tutacak liste
                 overlay_clips_for_this_short = []
+
+                # Logo ekle (eğer varsa)
+                if logo is not None:
+                    logo = logo.set_duration(clip_duration)
+                    overlay_clips_for_this_short.append(logo)
 
                 # Başlık ekle
                 title_full = part.get('title', '')
@@ -1015,7 +1039,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
 
                 # Altyazıları ekle (eğer srt_path varsa)
                 if srt_path and os.path.exists(srt_path):
-                    print(f"  Altyazılar {srt_path} dosyasından alınıyor...")
+                    print(f"\n  Altyazılar {srt_path} dosyasından alınıyor...")
                     with open(srt_path, 'r', encoding='utf-8') as f:
                         full_subs = list(srt.parse(f.read()))
 
@@ -1024,9 +1048,12 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         sub for sub in full_subs
                         if not (sub.end.total_seconds() < start_time or sub.start.total_seconds() > end_time)
                     ]
-                    print(f"  Klip için {len(relevant_subs)} altyazı segmenti bulundu.")
+                    print(f"  Klip {i+1}/{len(viral_parts)} için {len(relevant_subs)} altyazı segmenti bulundu.")
+                    print(f"  Video: {video_id}")
+                    print(f"  Başlık: {title_full}")
+                    print(f"  Süre: {clip_duration:.2f} saniye")
 
-                    for sub in relevant_subs:
+                    for sub_idx, sub in enumerate(relevant_subs):
                         sub_start = sub.start.total_seconds() - start_time # Klibin başlangıcına göre ayarla
                         sub_end = sub.end.total_seconds() - start_time     # Klibin başlangıcına göre ayarla
                         
@@ -1036,13 +1063,16 @@ def create_shorts(video_path, viral_parts, srt_path=None):
 
                         # Metni MoviePy TextClip için yeniden paketle
                         wrapped_sub_text = textwrap.fill(sub.content, width=25) # Altyazı satır uzunluğunu 25 karakterle sınırla
-
-                        # Altyazı için arka plan
-                        sub_bg_height = 120 # Arka plan yüksekliğini arttırdık
+                        
+                        # Satır sayısını hesapla
+                        line_count = len(wrapped_sub_text.split('\n'))
+                        
+                        # Altyazı için arka plan - satır sayısına göre yükseklik ayarla
+                        sub_bg_height = 40 + (line_count * 35) # Her satır için 35px + 40px padding
                         sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 128))
                         sub_bg = sub_bg.set_duration(sub_end - sub_start)
                         sub_bg = sub_bg.set_start(sub_start)
-                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 150)) # Konumu daha da yukarı çektik
+                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 275)) # 275px yukarı (225 + 50)
                         
                         sub_txt_clip = TextClip(
                             wrapped_sub_text,
@@ -1056,7 +1086,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         )
                         sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
                         sub_txt_clip = sub_txt_clip.set_start(sub_start)
-                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 150 + 10)) # Konumu daha da yukarı çektik
+                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 275 + 10)) # 275px yukarı + 10px padding
                         
                         # Animasyon ekle (fade in/out)
                         fade_duration = 0.2 # Hızlı geçiş
@@ -1065,6 +1095,11 @@ def create_shorts(video_path, viral_parts, srt_path=None):
 
                         final_clips_list.append(sub_bg)
                         final_clips_list.append(sub_txt_clip)
+                        
+                        # İlerleme göster
+                        progress = (sub_idx + 1) / len(relevant_subs) * 100
+                        print(f"\r  Altyazı işleniyor: %{progress:.1f} ({sub_idx + 1}/{len(relevant_subs)})", end="")
+                    print("\n  ✓ Altyazılar eklendi!")
 
                 # CompositeVideoClip oluştur
                 final_clip = CompositeVideoClip(
