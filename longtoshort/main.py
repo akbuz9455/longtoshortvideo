@@ -362,12 +362,6 @@ def smart_wrap_text(text, font, max_width):
     
     return '\n'.join(lines)
 
-def calculate_video_count(duration):
-    """Video süresine göre oluşturulacak video sayısını hesaplar"""
-    # Her 2 dakika için 1 video
-    base_count = max(3, min(20, int(duration / 120)))
-    return base_count
-
 def analyze_content(text, duration):
     """ChatGPT ile içeriği analiz eder ve viral kısımları belirler"""
     if not text or len(text) < 100:
@@ -401,10 +395,7 @@ def analyze_content(text, duration):
     print(f"\nAltyazı metni uzunluğu: {len(text)} karakter")
     print("İlk 500 karakter:", text[:500])
     
-    # Video sayısını hesapla
-    video_count = calculate_video_count(duration)
     print(f"\nVideo süresi: {duration} saniye")
-    print(f"Oluşturulacak video sayısı: {video_count}")
     
     prompt = f"""
     Aşağıdaki video altyazısını analiz et ve en ilgi çekici, viral olabilecek kısımları belirle.
@@ -421,8 +412,8 @@ def analyze_content(text, duration):
     ]
 
     Önemli kurallar:
-    1. Her kısım 15-120 saniye arası olmalı
-    2. Tam olarak {video_count} kısım belirle
+    1. Her kısım için süre sınırı yoktur, içeriğin doğal akışına göre belirleyebilirsiniz
+    2. En ilgi çekici ve viral olabilecek kısımları seç, sayı sınırı yok
     3. Başlıklar şu özelliklere sahip olmalı:
        - Seçilen kısımdaki içerikle TAMAMEN ilgili olmalı
        - Seçilen kısımdaki konuşmanın ana fikrini yansıtmalı
@@ -898,6 +889,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                     else:
                         raise FileNotFoundError(f"Video dosyası bulunamadı: {video_path}")
 
+        print(f"\nVideo dosyası bulundu: {video_path}")
         video = VideoFileClip(video_path)
         video_id = os.path.splitext(os.path.basename(video_path))[0]
         
@@ -931,14 +923,17 @@ def create_shorts(video_path, viral_parts, srt_path=None):
         # Viral kısımları sırala (en ilgi çekici olanlar önce)
         viral_parts.sort(key=lambda x: x.get('start_time', 0))
         
+        print(f"\nToplam {len(viral_parts)} viral kısım işlenecek")
+        
         for i, part in enumerate(viral_parts):
             try:
+                print(f"\nViral kısım {i+1}/{len(viral_parts)} işleniyor...")
+                
                 # Viral kısımın başlangıç ve bitiş zamanlarını al
                 start_time = part['start_time']
                 end_time = part['end_time']
                 clip_duration = end_time - start_time
                 
-                print(f"\nViral kısım {i+1} işleniyor:")
                 print(f"Başlangıç: {start_time:.2f} saniye")
                 print(f"Bitiş: {end_time:.2f} saniye")
                 print(f"Süre: {clip_duration:.2f} saniye")
@@ -967,7 +962,7 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 
                 # Ana videoyu dikey formata dönüştür
                 clip = clip.resize(height=int(target_h * 0.65))
-                y_position = target_h - clip.h - 250
+                y_position = target_h - clip.h - 300
                 clip = clip.set_position(('center', y_position))
 
                 # Overlay kliplerini tutacak liste
@@ -983,8 +978,8 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 if title_full:
                     try:
                         # Clean [] from title using re.sub for robustness
-                        title_full = re.sub(r'\[|\]', '', title_full).strip() # Using re.sub for cleaner removal
-                        print(f"DEBUG: Cleaned title_full: '{title_full}'") # Added this debug print
+                        title_full = re.sub(r'\[|\]', '', title_full).strip()
+                        print(f"DEBUG: Cleaned title_full: '{title_full}'")
 
                         # Başlık için güvenli bir dosya adı oluştur
                         safe_title = re.sub(r'[^\w\s-]', '', title_full).strip().replace(' ', '_')
@@ -995,19 +990,19 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                         print(f"Çıktı klasörü oluşturuldu: {output_dir}")
 
                         # Başlık için arka plan oluştur
-                        title_bg_height = 240 # Increased height again
+                        title_bg_height = 240
                         title_bg = ColorClip(size=(target_w, title_bg_height), color=(0, 0, 0, 128))
                         title_bg = title_bg.set_duration(clip_duration)
                         title_bg = title_bg.set_position(('center', 50))
 
                         # Ana başlık metin görüntüsünü oluştur
                         text_image_np = create_text_image(
-                            title_full, # Sadece metin kısmını gönder
-                            target_w - 80, # Daha geniş alan bırak (her iki yandan 40px boşluk)
-                            title_bg_height, # Yüksekliği arka plan yüksekliğiyle aynı tut
+                            title_full,
+                            target_w - 80,
+                            title_bg_height,
                             font_size=90,
-                            main_font_path='DynaPuff/static/DynaPuff-Regular.ttf', # Ana fontu belirle
-                            output_folder=output_dir # Test görüntüsünü kaydetmek için klasör yolunu ilet
+                            main_font_path='DynaPuff/static/DynaPuff-Regular.ttf',
+                            output_folder=output_dir
                         )
                         txt_clip = ImageClip(text_image_np)
                         txt_clip = txt_clip.set_duration(clip_duration)
@@ -1054,51 +1049,63 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                     print(f"  Süre: {clip_duration:.2f} saniye")
 
                     for sub_idx, sub in enumerate(relevant_subs):
-                        sub_start = sub.start.total_seconds() - start_time # Klibin başlangıcına göre ayarla
-                        sub_end = sub.end.total_seconds() - start_time     # Klibin başlangıcına göre ayarla
-                        
-                        # Altyazı klibi oluşturma sırasında geçerli zaman aralığı kontrolü
-                        if sub_end <= sub_start:
-                            continue # Geçersiz süre, atla
+                        try:
+                            sub_start = sub.start.total_seconds() - start_time
+                            sub_end = sub.end.total_seconds() - start_time
+                            
+                            if sub_end <= sub_start:
+                                continue
 
-                        # Metni MoviePy TextClip için yeniden paketle
-                        wrapped_sub_text = textwrap.fill(sub.content, width=25) # Altyazı satır uzunluğunu 25 karakterle sınırla
-                        
-                        # Satır sayısını hesapla
-                        line_count = len(wrapped_sub_text.split('\n'))
-                        
-                        # Altyazı için arka plan - satır sayısına göre yükseklik ayarla
-                        sub_bg_height = 40 + (line_count * 35) # Her satır için 35px + 40px padding
-                        sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 128))
-                        sub_bg = sub_bg.set_duration(sub_end - sub_start)
-                        sub_bg = sub_bg.set_start(sub_start)
-                        sub_bg = sub_bg.set_position(('center', target_h - sub_bg_height - 275)) # 275px yukarı (225 + 50)
-                        
-                        sub_txt_clip = TextClip(
-                            wrapped_sub_text,
-                            fontsize=70, # Font boyutunu 70 yaptık
-                            color='white',
-                            font='Arial-Bold', # Kalın font stili
-                            stroke_color='black',
-                            stroke_width=2,
-                            method='caption', # Metni daha iyi sarmak için
-                            size=(target_w - 40, None) # Genişliği sınırla
-                        )
-                        sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
-                        sub_txt_clip = sub_txt_clip.set_start(sub_start)
-                        sub_txt_clip = sub_txt_clip.set_position(('center', target_h - sub_bg_height - 275 + 10)) # 275px yukarı + 10px padding
-                        
-                        # Animasyon ekle (fade in/out)
-                        fade_duration = 0.2 # Hızlı geçiş
-                        sub_bg = sub_bg.crossfadein(fade_duration).crossfadeout(fade_duration)
-                        sub_txt_clip = sub_txt_clip.crossfadein(fade_duration).crossfadeout(fade_duration)
+                            # Altyazı metni - kalın font ile
+                            sub_txt_clip = TextClip(
+                                sub.content,
+                                fontsize=70,
+                                color='white',
+                                font='Arial-Bold',
+                                method='caption',
+                                size=(target_w - 40, None)
+                            )
+                            sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
+                            sub_txt_clip = sub_txt_clip.set_start(sub_start)
+                            
+                            # Altyazı için arka plan - metin yüksekliğine göre ayarla
+                            vertical_padding_sub = 20 # Metin etrafında dikey boşluk
+                            sub_bg_height = sub_txt_clip.h + (2 * vertical_padding_sub)
+                            
+                            # Minimum yüksekliği koru
+                            min_sub_bg_height = 80 # Çok kısa metinler için minimum yükseklik
+                            if sub_bg_height < min_sub_bg_height:
+                                sub_bg_height = min_sub_bg_height
+                            
+                            sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 180))
+                            sub_bg = sub_bg.set_duration(sub_end - sub_start)
+                            sub_bg = sub_bg.set_start(sub_start)
+                            
+                            # Altyazı bloğunu (arka plan + metin) alt kısımda konumlandır
+                            # Ekranın altından 150 piksel yukarıda başlayacak şekilde ayarlama
+                            subtitle_block_y_position_top = (target_h - 150) - sub_bg_height
+                            sub_bg = sub_bg.set_position(('center', subtitle_block_y_position_top))
+                            
+                            # Metin klibini arka plan içinde dikey olarak ortala
+                            text_y_position = subtitle_block_y_position_top + (sub_bg_height - sub_txt_clip.h) / 2
+                            sub_txt_clip = sub_txt_clip.set_position(('center', text_y_position))
+                            
+                            # Animasyon ekle
+                            fade_duration = 0.2
+                            sub_bg = sub_bg.crossfadein(fade_duration).crossfadeout(fade_duration)
+                            sub_txt_clip = sub_txt_clip.crossfadein(fade_duration).crossfadeout(fade_duration)
 
-                        final_clips_list.append(sub_bg)
-                        final_clips_list.append(sub_txt_clip)
-                        
-                        # İlerleme göster
-                        progress = (sub_idx + 1) / len(relevant_subs) * 100
-                        print(f"\r  Altyazı işleniyor: %{progress:.1f} ({sub_idx + 1}/{len(relevant_subs)})", end="")
+                            final_clips_list.append(sub_bg)
+                            final_clips_list.append(sub_txt_clip)
+                            
+                            # İlerleme göster
+                            progress = (sub_idx + 1) / len(relevant_subs) * 100
+                            print(f"\r  Altyazı işleniyor: %{progress:.1f} ({sub_idx + 1}/{len(relevant_subs)})", end="")
+                            
+                        except Exception as e:
+                            print(f"\n  Altyazı segmenti işlenirken hata: {str(e)}")
+                            continue
+                            
                     print("\n  ✓ Altyazılar eklendi!")
 
                 # CompositeVideoClip oluştur
@@ -1114,16 +1121,15 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 # Önce NVIDIA NVENC ile kaydetmeyi dene
                 try:
                     final_clip.write_videofile(
-                        output_path.replace(".mov", "_nvenc.mov"), # Çıktı dosyası adı sonunda _nvenc olacak
-                        codec='h264_nvenc', # NVIDIA GPU donanım kodlayıcısı
+                        output_path.replace(".mov", "_nvenc.mov"),
+                        codec='h264_nvenc',
                         bitrate='4000k',
                         audio_codec='aac',
                         audio_bitrate='192k',
-                        preset='p7', # NVENC için optimize edilmiş preset (hız ve kalite dengesi)
-                        # threads=4, # Donanım kodlamada genellikle thread sayısı otomatik yönetilir.
+                        preset='p7',
                         ffmpeg_params=[
-                            '-rc:v', 'vbr_hq', # Değişken bit oranı, yüksek kalite
-                            '-cq:v', '23', # Kalite ayarı (CRF yerine)
+                            '-rc:v', 'vbr_hq',
+                            '-cq:v', '23',
                             '-movflags', '+faststart',
                             '-pix_fmt', 'yuv420p',
                             '-colorspace', 'bt709',
@@ -1163,13 +1169,18 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 print("Hata detayları:")
                 import traceback
                 traceback.print_exc()
+                print("Bir sonraki viral kısma geçiliyor...")
                 continue
         
         video.close()
         bg_video.close()
+        print("\n✓ Tüm viral kısımlar işlendi!")
         
     except Exception as e:
         print(f"Video işlenirken hata oluştu: {str(e)}")
+        print("Hata detayları:")
+        import traceback
+        traceback.print_exc()
         raise
 
 def extract_hardcoded_subtitles(video_path):
