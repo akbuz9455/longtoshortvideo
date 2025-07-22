@@ -162,129 +162,165 @@ def download_video(url, subtitle_choice='1'):
         
     output_template = f'{video_id}.mov'
     
-    ydl_opts = {
-        'format': 'bestvideo[height>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/bestvideo[height>=480]+bestaudio/bestvideo[height>=360]+bestaudio/best',
-        'outtmpl': output_template,
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-        'force_generic_extractor': False,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['tr', 'en', 'tr-TR', 'en-US'],
-        'postprocessors': [{
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mov',
-        }],
-        'skip_download': False,
-        'keepvideo': True,
-        'verbose': True,
-        'format_sort': ['res:1080', 'size', 'br', 'asr'],
-        'merge_output_format': 'mov',
-        'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe"
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print("\nVideo bilgileri alınıyor...")
-            info = ydl.extract_info(url, download=True)
-            print("\nVideo bilgileri:")
-            print(f"Başlık: {info.get('title', 'Bilinmiyor')}")
-            print(f"Süre: {info.get('duration', 'Bilinmiyor')} saniye")
-            print(f"Çözünürlük: {info.get('height', 'Bilinmiyor')}p")
-            print(f"Format: {info.get('format', 'Bilinmiyor')}")
-            print(f"Format ID: {info.get('format_id', 'Bilinmiyor')}")
-            print(f"Format Açıklaması: {info.get('format_note', 'Bilinmiyor')}")
-            print(f"Video Codec: {info.get('vcodec', 'Bilinmiyor')}")
-            print(f"Audio Codec: {info.get('acodec', 'Bilinmiyor')}")
-            
-            print(f"Altyazı dilleri: {list(info.get('subtitles', {}).keys())}")
-            print(f"Otomatik altyazı dilleri: {list(info.get('automatic_captions', {}).keys())}")
-            
-            # Altyazı dosyalarını kontrol et
-            print("\nAltyazı dosyaları kontrol ediliyor...")
-            tr_vtt = f"{video_id}.tr.vtt"
-            tr_tr_vtt = f"{video_id}.tr-TR.vtt"
-            en_vtt = f"{video_id}.en.vtt"
-            en_us_vtt = f"{video_id}.en-US.vtt"
-            
-            # Türkçe altyazıları kontrol et
-            if os.path.exists(tr_vtt):
-                print(f"Türkçe altyazı dosyası bulundu: {tr_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(tr_vtt)} byte")
-            elif os.path.exists(tr_tr_vtt):
-                print(f"Türkçe altyazı dosyası bulundu: {tr_tr_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(tr_tr_vtt)} byte")
-                # Dosyayı tr.vtt olarak kopyala
-                import shutil
-                shutil.copy2(tr_tr_vtt, tr_vtt)
-            else:
-                print("Türkçe altyazı dosyası bulunamadı!")
-                
-            # İngilizce altyazıları kontrol et
-            if os.path.exists(en_vtt):
-                print(f"İngilizce altyazı dosyası bulundu: {en_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(en_vtt)} byte")
-            elif os.path.exists(en_us_vtt):
-                print(f"İngilizce altyazı dosyası bulundu: {en_us_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(en_us_vtt)} byte")
-                # Dosyayı en.vtt olarak kopyala
-                import shutil
-                shutil.copy2(en_us_vtt, en_vtt)
-            else:
-                print("İngilizce altyazı dosyası bulunamadı!")
-            
-            return output_template, info
-    except Exception as e:
-        print(f"Video indirme hatası: {str(e)}")
-        print("Alternatif indirme yöntemi deneniyor...")
-        ydl_opts = {
+    # Farklı indirme stratejileri
+    download_strategies = [
+        # Strateji 1: Normal indirme (altyazısız - rate limiting için)
+        {
             'format': 'bestvideo[height>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/bestvideo[height>=480]+bestaudio/bestvideo[height>=360]+bestaudio/best',
             'outtmpl': output_template,
-            'quiet': True,
-            'no_warnings': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': ['tr', 'en', 'tr-TR', 'en-US'],
+            'quiet': False,
+            'no_warnings': False,
+            'extract_flat': False,
+            'force_generic_extractor': False,
+            'writesubtitles': False,  # Altyazı indirmeyi kapat
+            'writeautomaticsub': False,  # Otomatik altyazı indirmeyi kapat
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mov',
+            }],
+            'skip_download': False,
+            'keepvideo': True,
             'verbose': True,
-            'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe"
+            'format_sort': ['res:1080', 'size', 'br', 'asr'],
+            'merge_output_format': 'mov',
+            'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe",
+            'sleep_interval': 1,  # Daha kısa bekleme
+            'max_sleep_interval': 5,  # Daha kısa maksimum bekleme
+            'retries': 5,  # Daha az yeniden deneme
+            'fragment_retries': 5,
+            'file_access_retries': 5,
+            'http_chunk_size': 10485760,
+            'buffersize': 1024,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Keep-Alive': '300',
+                'Connection': 'keep-alive',
+            }
+        },
+        # Strateji 2: Basit indirme (sadece video)
+        {
+            'format': 'best',
+            'outtmpl': output_template,
+            'quiet': False,
+            'no_warnings': False,
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'verbose': True,
+            'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe",
+            'sleep_interval': 2,
+            'max_sleep_interval': 10,
+            'retries': 8,
+            'fragment_retries': 8,
+            'file_access_retries': 8,
+            'http_chunk_size': 5242880,
+            'buffersize': 512,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Keep-Alive': '300',
+                'Connection': 'keep-alive',
+            }
+        },
+        # Strateji 3: En basit indirme (son çare)
+        {
+            'format': 'worst',
+            'outtmpl': output_template,
+            'quiet': False,
+            'no_warnings': False,
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'verbose': True,
+            'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe",
+            'sleep_interval': 3,
+            'max_sleep_interval': 15,
+            'retries': 10,
+            'fragment_retries': 10,
+            'file_access_retries': 10,
+            'http_chunk_size': 2097152,
+            'buffersize': 256,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Keep-Alive': '300',
+                'Connection': 'keep-alive',
+            }
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+    ]
+    
+    for strategy_idx, ydl_opts in enumerate(download_strategies, 1):
+        try:
+            print(f"\nİndirme stratejisi {strategy_idx}/{len(download_strategies)} deneniyor...")
             
-            # Altyazı dosyalarını kontrol et
-            print("\nAltyazı dosyaları kontrol ediliyor...")
-            tr_vtt = f"{video_id}.tr.vtt"
-            tr_tr_vtt = f"{video_id}.tr-TR.vtt"
-            en_vtt = f"{video_id}.en.vtt"
-            en_us_vtt = f"{video_id}.en-US.vtt"
+            # Cookie dosyası kontrolü
+            if 'cookiefile' in ydl_opts and not os.path.exists(ydl_opts['cookiefile']):
+                print(f"Cookie dosyası bulunamadı: {ydl_opts['cookiefile']}")
+                ydl_opts.pop('cookiefile', None)
             
-            # Türkçe altyazıları kontrol et
-            if os.path.exists(tr_vtt):
-                print(f"Türkçe altyazı dosyası bulundu: {tr_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(tr_vtt)} byte")
-            elif os.path.exists(tr_tr_vtt):
-                print(f"Türkçe altyazı dosyası bulundu: {tr_tr_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(tr_tr_vtt)} byte")
-                # Dosyayı tr.vtt olarak kopyala
-                import shutil
-                shutil.copy2(tr_tr_vtt, tr_vtt)
-            else:
-                print("Türkçe altyazı dosyası bulunamadı!")
+            # Rate limiting hatası için bekleme
+            if strategy_idx > 1:
+                wait_time = 5 * strategy_idx  # Daha kısa bekleme süreleri
+                print(f"Rate limiting için {wait_time} saniye bekleniyor...")
+                import time
+                time.sleep(wait_time)
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                print("\nVideo bilgileri alınıyor...")
+                info = ydl.extract_info(url, download=True)
+                print("\nVideo bilgileri:")
+                print(f"Başlık: {info.get('title', 'Bilinmiyor')}")
+                print(f"Süre: {info.get('duration', 'Bilinmiyor')} saniye")
+                print(f"Çözünürlük: {info.get('height', 'Bilinmiyor')}p")
+                print(f"Format: {info.get('format', 'Bilinmiyor')}")
+                print(f"Format ID: {info.get('format_id', 'Bilinmiyor')}")
+                print(f"Format Açıklaması: {info.get('format_note', 'Bilinmiyor')}")
+                print(f"Video Codec: {info.get('vcodec', 'Bilinmiyor')}")
+                print(f"Audio Codec: {info.get('acodec', 'Bilinmiyor')}")
                 
-            # İngilizce altyazıları kontrol et
-            if os.path.exists(en_vtt):
-                print(f"İngilizce altyazı dosyası bulundu: {en_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(en_vtt)} byte")
-            elif os.path.exists(en_us_vtt):
-                print(f"İngilizce altyazı dosyası bulundu: {en_us_vtt}")
-                print(f"Dosya boyutu: {os.path.getsize(en_us_vtt)} byte")
-                # Dosyayı en.vtt olarak kopyala
-                import shutil
-                shutil.copy2(en_us_vtt, en_vtt)
-            else:
-                print("İngilizce altyazı dosyası bulunamadı!")
+                print(f"✓ Strateji {strategy_idx} başarılı!")
+                return output_template, info
                 
-            return output_template, info
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Strateji {strategy_idx} başarısız: {error_msg}")
+            
+            # Rate limiting hatası kontrolü
+            if "429" in error_msg or "Too Many Requests" in error_msg:
+                print("Rate limiting tespit edildi. Bir sonraki stratejiye geçiliyor...")
+                continue
+            elif "Video unavailable" in error_msg or "Private video" in error_msg:
+                print("Video erişilemez durumda. İndirme iptal ediliyor.")
+                raise
+            elif "Sign in" in error_msg or "login" in error_msg.lower():
+                print("Video giriş gerektiriyor. Bir sonraki stratejiye geçiliyor...")
+                continue
+            elif "copyright" in error_msg.lower() or "blocked" in error_msg.lower():
+                print("Video telif hakkı nedeniyle engellenmiş. Bir sonraki stratejiye geçiliyor...")
+                continue
+            elif strategy_idx == len(download_strategies):
+                print("Tüm stratejiler başarısız oldu. Son hata:")
+                print(f"Hata detayları: {error_msg}")
+                print("\nÖneriler:")
+                print("1. İnternet bağlantınızı kontrol edin")
+                print("2. VPN kullanmayı deneyin")
+                print("3. Birkaç dakika bekleyip tekrar deneyin")
+                print("4. Video URL'sinin doğru olduğundan emin olun")
+                raise
+            else:
+                print("Bir sonraki stratejiye geçiliyor...")
+                continue
+    
+    # Hiçbir strateji başarılı olmadıysa
+    raise Exception("Tüm indirme stratejileri başarısız oldu!")
 
 def extract_subtitles(info, subtitle_choice='1'):
     """Video bilgilerinden altyazıları çıkarır"""
@@ -354,8 +390,38 @@ def smart_wrap_text(text, font, max_width):
             if current_line_words: # Add the current line if it's not empty
                 lines.append(" ".join(current_line_words))
             
-            # Start a new line with the current word
-            current_line_words = [word]
+            # Eğer tek kelime bile sığmıyorsa, kelimeyi böl
+            if not current_line_words:
+                if len(word) > 10:  # Sadece uzun kelimeleri böl
+                    # Kelimeyi hecelere böl
+                    syllables = []
+                    current_syllable = ""
+                    for char in word:
+                        current_syllable += char
+                        if len(current_syllable) >= 3:  # En az 3 karakterlik heceler
+                            syllables.append(current_syllable)
+                            current_syllable = ""
+                    if current_syllable:
+                        syllables.append(current_syllable)
+                    
+                    # Heceleri satırlara böl
+                    current_syllable_line = ""
+                    for syllable in syllables:
+                        test_syllable_line = current_syllable_line + syllable
+                        bbox = dummy_draw.textbbox((0,0), test_syllable_line, font=font)
+                        if bbox[2] - bbox[0] <= max_width:
+                            current_syllable_line = test_syllable_line
+                        else:
+                            if current_syllable_line:
+                                lines.append(current_syllable_line)
+                            current_syllable_line = syllable
+                    if current_syllable_line:
+                        lines.append(current_syllable_line)
+                else:
+                    lines.append(word)
+            else:
+                # Start a new line with the current word
+                current_line_words = [word]
             
     if current_line_words:
         lines.append(" ".join(current_line_words))
@@ -509,9 +575,9 @@ def analyze_content(text, duration):
                     if part['start'] < 0 or part['end'] > duration:
                         raise Exception(f"Tüm süreler 0 ile {duration} saniye arasında olmalı!")
                     if len(part['title']) > 50:
-                        raise Exception("Başlık en fazla 50 karakter olmalı!")
+                        part['title'] = part['title'][:47] + "..."
                     if len(part['description']) > 100:
-                        raise Exception("Açıklama en fazla 100 karakter olmalı!")
+                        part['description'] = part['description'][:97] + "..."
                 
                 print(f"\nBulunan viral kısım sayısı: {len(result)}")
                 
@@ -825,19 +891,18 @@ def create_text_image(text, width, height, font_size=90, main_font_path='DynaPuf
     draw = ImageDraw.Draw(image)
 
     # Metni dikeyde ortala ve ekstra boşluk bırak
-    vertical_padding = 80 # Increased padding
+    vertical_padding = 120  # Başlık için daha fazla dikey boşluk
     y_position = (height - total_text_height) // 2 
     
     # Adjust y_position based on the highest point above baseline to prevent clipping
-    # Add absolute value of min_top_offset_overall to y_position to shift text down if ascenders are clipped
-    y_position_adjusted = y_position - min_top_offset_overall # This effectively pushes the entire block down
+    y_position_adjusted = y_position - min_top_offset_overall
     
     # Ensure minimum vertical padding from top
     if y_position_adjusted < vertical_padding:
         y_position_adjusted = vertical_padding
 
     # Alt kısım için ekstra boşluk ekle
-    bottom_padding = 40  # Alt kısım için ekstra boşluk
+    bottom_padding = 60  # Alt kısım için daha fazla boşluk
     y_position_adjusted = min(y_position_adjusted, height - total_text_height - bottom_padding)
 
     print(f"DEBUG: Initial y_position: {y_position}, min_top_offset_overall: {min_top_offset_overall}, y_position_adjusted: {y_position_adjusted}")
@@ -1082,8 +1147,8 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                             sub_bg = sub_bg.set_start(sub_start)
                             
                             # Altyazı bloğunu (arka plan + metin) alt kısımda konumlandır
-                            # Ekranın altından 150 piksel yukarıda başlayacak şekilde ayarlama
-                            subtitle_block_y_position_top = (target_h - 150) - sub_bg_height
+                            # Ekranın altından 350 piksel yukarıda başlayacak şekilde ayarlama
+                            subtitle_block_y_position_top = (target_h - 350) - sub_bg_height
                             sub_bg = sub_bg.set_position(('center', subtitle_block_y_position_top))
                             
                             # Metin klibini arka plan içinde dikey olarak ortala
@@ -1443,6 +1508,8 @@ def process_local_video(video_path):
 
 def main():
     print("\n=== Video Processing Program ===")
+    print("YouTube'dan video indirme ve Shorts oluşturma programı")
+    print("Not: Rate limiting sorunları için program otomatik olarak farklı stratejiler deneyecektir.")
     print("1. Download from YouTube")
     print("2. Exit")
     
@@ -1450,7 +1517,16 @@ def main():
     
     if choice == "1":
         # Get YouTube URL
-        url = input("\nEnter YouTube video URL: ")
+        url = input("\nEnter YouTube video URL: ").strip()
+        
+        # URL kontrolü
+        if not url or "youtube.com" not in url and "youtu.be" not in url:
+            print("Geçersiz YouTube URL'si! Program sonlandırılıyor.")
+            return
+        
+        print(f"\nURL doğrulandı: {url}")
+        print("Video indirme başlatılıyor...")
+        print("Not: Rate limiting durumunda program otomatik olarak farklı stratejiler deneyecektir.")
         
         # Subtitle options
         print("\nSubtitle options:")
@@ -1497,33 +1573,48 @@ def main():
                 if not selected_language:
                     print("Invalid language choice! Using auto-detection.")
         
-        # Download video
-        print("\n1. Downloading video...")
-        video_path, info = download_video(url)
-        print("✓ Video downloaded!")
-        
-        srt_path = None
-        subtitles_text = ""
-
-        if subtitle_choice == "1":
-            # Generate transcript with Whisper
-            print("\n2. Generating transcript...")
-            srt_path = transcribe_audio(video_path, selected_language)
+        try:
+            # Download video
+            print("\n1. Downloading video...")
+            print("Bu işlem birkaç dakika sürebilir. Lütfen bekleyin...")
+            video_path, info = download_video(url)
+            print("✓ Video downloaded!")
             
-            if srt_path:
-                # Read SRT text
-                subtitles_text = read_srt_file(srt_path)
-        
-        # Analyze content
-        print("\n3. Analyzing content...")
-        print("Sending request to OpenAI API...")
-        viral_parts = analyze_content(subtitles_text, info.get('duration', 0))
-        print(f"✓ Content analyzed! Found {len(viral_parts)} viral segments.")
-        
-        # Create short videos
-        print("\n4. Creating short videos...")
-        create_shorts(video_path, viral_parts, srt_path=srt_path)
-        print("✓ Short videos created!")
+            srt_path = None
+            subtitles_text = ""
+
+            if subtitle_choice == "1":
+                # Generate transcript with Whisper
+                print("\n2. Generating transcript...")
+                srt_path = transcribe_audio(video_path, selected_language)
+                
+                if srt_path:
+                    # Read SRT text
+                    subtitles_text = read_srt_file(srt_path)
+            
+            # Analyze content
+            print("\n3. Analyzing content...")
+            print("Sending request to OpenAI API...")
+            viral_parts = analyze_content(subtitles_text, info.get('duration', 0))
+            print(f"✓ Content analyzed! Found {len(viral_parts)} viral segments.")
+            
+            # Create short videos
+            print("\n4. Creating short videos...")
+            create_shorts(video_path, viral_parts, srt_path=srt_path)
+            print("✓ Short videos created!")
+            
+        except Exception as e:
+            print(f"\n❌ Hata oluştu: {str(e)}")
+            print("\nHata detayları:")
+            import traceback
+            traceback.print_exc()
+            print("\nÖneriler:")
+            print("1. İnternet bağlantınızı kontrol edin")
+            print("2. Video URL'sinin doğru olduğundan emin olun")
+            print("3. Video'nun herkese açık olduğundan emin olun")
+            print("4. Birkaç dakika bekleyip tekrar deneyin")
+            print("5. VPN kullanmayı deneyin")
+            return
         
     elif choice == "2":
         print("Exiting program...")
@@ -1533,6 +1624,7 @@ def main():
         return
     
     print("\nProcess completed!")
+    print("Shorts videoları başarıyla oluşturuldu!")
 
 if __name__ == "__main__":
     print(os.path.exists('DynaPuff/static/DynaPuff-Regular.ttf'))
