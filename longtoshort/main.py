@@ -19,6 +19,7 @@ import torch
 from faster_whisper import WhisperModel
 import srt
 import datetime as dt
+import time
 
 # FFmpeg yolunu ekle
 os.environ["PATH"] += os.pathsep + r"D:\ffmpeg\bin"
@@ -160,13 +161,13 @@ def download_video(url, subtitle_choice='1'):
     if not video_id:
         raise ValueError("Geçersiz YouTube URL'si")
         
-    output_template = f'{video_id}.mov'
+    output_template = f'{video_id}.%(ext)s'
     
     # Farklı indirme stratejileri
     download_strategies = [
-        # Strateji 1: Normal indirme (altyazısız - rate limiting için)
+        # Strateji 1: En yüksek kalite ve bitrate (altyazısız - rate limiting için)
         {
-            'format': 'bestvideo[height>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/bestvideo[height>=480]+bestaudio/bestvideo[height>=360]+bestaudio/best',
+            'format': 'bestvideo[height>=1080][vcodec^=avc1]+bestaudio[abr<=320]/bestvideo[height>=1080]+bestaudio/bestvideo[height>=720][vcodec^=avc1]+bestaudio[abr<=320]/bestvideo[height>=720]+bestaudio/bestvideo[height>=480][vcodec^=avc1]+bestaudio[abr<=320]/bestvideo[height>=480]+bestaudio/bestvideo[height>=360][vcodec^=avc1]+bestaudio[abr<=320]/bestvideo[height>=360]+bestaudio/best[height>=1080]/best[height>=720]/best[height>=480]/best[height>=360]/best',
             'outtmpl': output_template,
             'quiet': False,
             'no_warnings': False,
@@ -174,15 +175,10 @@ def download_video(url, subtitle_choice='1'):
             'force_generic_extractor': False,
             'writesubtitles': False,  # Altyazı indirmeyi kapat
             'writeautomaticsub': False,  # Otomatik altyazı indirmeyi kapat
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mov',
-            }],
             'skip_download': False,
             'keepvideo': True,
             'verbose': True,
-            'format_sort': ['res:1080', 'size', 'br', 'asr'],
-            'merge_output_format': 'mov',
+            'format_sort': ['res:1080', 'br:8000', 'size', 'asr'],
             'ffmpeg_location': r"D:\ffmpeg\bin\ffmpeg.exe",
             'sleep_interval': 1,  # Daha kısa bekleme
             'max_sleep_interval': 5,  # Daha kısa maksimum bekleme
@@ -201,9 +197,9 @@ def download_video(url, subtitle_choice='1'):
                 'Connection': 'keep-alive',
             }
         },
-        # Strateji 2: Basit indirme (sadece video)
+        # Strateji 2: Yüksek kalite (sadece video)
         {
-            'format': 'best',
+            'format': 'bestvideo[height>=720]+bestaudio[abr<=320]/best[height>=720]/best',
             'outtmpl': output_template,
             'quiet': False,
             'no_warnings': False,
@@ -286,8 +282,22 @@ def download_video(url, subtitle_choice='1'):
                 print(f"Video Codec: {info.get('vcodec', 'Bilinmiyor')}")
                 print(f"Audio Codec: {info.get('acodec', 'Bilinmiyor')}")
                 
+                # Gerçek video dosyasının path'ini bul
+                video_id = info.get('id', '')
+                common_extensions = ['.mp4', '.mkv', '.webm', '.avi', '.mov']
+                video_path = None
+                
+                for ext in common_extensions:
+                    test_path = f"{video_id}{ext}"
+                    if os.path.exists(test_path):
+                        video_path = test_path
+                        break
+                
+                if not video_path:
+                    raise FileNotFoundError(f"İndirilen video dosyası bulunamadı. Video ID: {video_id}")
+                
                 print(f"✓ Strateji {strategy_idx} başarılı!")
-                return output_template, info
+                return video_path, info
                 
         except Exception as e:
             error_msg = str(e)
@@ -428,44 +438,54 @@ def smart_wrap_text(text, font, max_width):
     
     return '\n'.join(lines)
 
-def analyze_content(text, duration):
+def analyze_content(text, duration, srt_path=None):
     """ChatGPT ile içeriği analiz eder ve viral kısımları belirler"""
-    if not text or len(text) < 100:
-        print("Uyarı: Altyazı metni yetersiz! Video süresine göre bölümlere ayırılacak.")
-        # Video süresine göre bölümler oluştur
-        parts = []
-        part_duration = min(30, duration)  # Her bölüm en fazla 30 saniye
-        current_time = 0
-        
-        while current_time < duration:
-            end_time = min(current_time + part_duration, duration)
-            parts.append({
-                "start": current_time,
-                "end": end_time,
-                "title": f"Bölüm {len(parts) + 1}",
-                "description": f"Video içeriğinin {current_time}-{end_time} saniye arası"
-            })
-            current_time = end_time
-            
-        return [{
-            "start_time": part["start"],
-            "end_time": part["end"],
-            "title": part["title"],
-            "reason": part["description"],
-            "speaker_detected": False,
-            "speaker_time": None,
-            "context": part["description"],
-            "sentence_start": part["start"]
-        } for part in parts]
-        
     print(f"\nAltyazı metni uzunluğu: {len(text)} karakter")
     print("İlk 500 karakter:", text[:500])
-    
     print(f"\nVideo süresi: {duration} saniye")
+    
+    # Eğer metin çok kısaysa, Whisper'ın daha iyi sonuç vermesi için bekle
+    if not text or len(text) < 50:
+        print("Uyarı: Altyazı metni çok kısa! Whisper'ın daha iyi sonuç vermesi için bekleniyor...")
+        print("Lütfen Whisper'ın transkript işlemini tamamlamasını bekleyin.")
+        return []
+    
+    # Eğer SRT dosyası varsa, zaman damgalarını kullan
+    if srt_path and os.path.exists(srt_path):
+        try:
+            print("SRT dosyasından zaman damgaları alınıyor...")
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                subs = list(srt.parse(f.read()))
+            
+            # Zaman damgalı metin oluştur
+            timed_text = ""
+            for sub in subs:
+                start_sec = sub.start.total_seconds()
+                end_sec = sub.end.total_seconds()
+                timed_text += f"[{start_sec:.1f}s-{end_sec:.1f}s] {sub.content}\n"
+            
+            print(f"Zaman damgalı metin oluşturuldu: {len(timed_text)} karakter")
+            text = timed_text
+        except Exception as e:
+            print(f"SRT dosyası okuma hatası: {str(e)}")
     
     prompt = f"""
     Aşağıdaki video altyazısını analiz et ve en ilgi çekici, viral olabilecek kısımları belirle.
     Her kısım için başlangıç ve bitiş sürelerini, başlığı ve açıklamayı belirt.
+    
+    ÖNEMLİ: Bu altyazı Whisper ile otomatik olarak oluşturulmuştur ve zaman damgaları içermektedir.
+    Her satır [başlangıçsaniye-bitişsaniye] formatında zaman damgası içerir.
+    Bu zaman damgalarını kullanarak doğru süreleri belirle.
+    
+    ÖRNEK:
+    [0.0s-2.5s] Merhaba arkadaşlar
+    [2.5s-5.0s] Bugün size çok önemli bir konudan bahsedeceğim
+    [5.0s-8.0s] Bu konu gerçekten çok ilginç
+    
+    Bu durumda:
+    - İlk kısım: start=0.0, end=2.5, title="Merhaba Arkadaşlar"
+    - İkinci kısım: start=2.5, end=5.0, title="Önemli Konu Hakkında"
+    
     Yanıtını aşağıdaki formatta ver:
 
     [
@@ -478,9 +498,10 @@ def analyze_content(text, duration):
     ]
 
     Önemli kurallar:
-    1. Her kısım için süre sınırı yoktur, içeriğin doğal akışına göre belirleyebilirsiniz
+    1. Her kısım 15-120 saniye arasında olmalı (çok kısa veya çok uzun olmasın)
     2. En ilgi çekici ve viral olabilecek kısımları seç, sayı sınırı yok
-    3. Başlıklar şu özelliklere sahip olmalı:
+    3. Kısımları eşit bölme! İçeriğin doğal akışına göre belirle
+    4. Başlıklar şu özelliklere sahip olmalı:
        - Seçilen kısımdaki içerikle TAMAMEN ilgili olmalı
        - Seçilen kısımdaki konuşmanın ana fikrini yansıtmalı
        - İlgi çekici ve tıklama isteği uyandırmalı
@@ -489,22 +510,27 @@ def analyze_content(text, duration):
        - Kesinlikle emoji kullanma!
        - Türkçe karakterler kullan (ç, ş, ı, ğ, ü, ö)
        - Büyük harfle başla
-    4. Her kısım için açıklama şu özelliklere sahip olmalı:
+    5. Her kısım için açıklama şu özelliklere sahip olmalı:
        - Seçilen kısımda ne anlatıldığını özetle
        - En fazla 100 karakter
        - Türkçe karakterler kullan
-    5. Sadece JSON array döndür, başka açıklama ekleme
-    6. JSON formatına tam olarak uy, virgül ve süslü parantezlere dikkat et
-    7. Her kısım için start ve end değerleri sayı olmalı
-    8. Her kısım için title ve description string olmalı
-    9. Boş array döndürme, en az bir kısım belirt
-    10. start değeri her zaman end değerinden küçük olmalı
-    11. Tüm süreler video süresi ({duration} saniye) içinde olmalı
-    12. Her kısım için başlık ve açıklama altyazı metninden alınmalı
-    13. Kısımları sıralı seçme, en ilgi çekici ve viral olabilecek kısımları seç
-    14. Her kısım için başlık, o kısımdaki içerikle doğrudan ilgili olmalı
+    6. Sadece JSON array döndür, başka açıklama ekleme
+    7. JSON formatına tam olarak uy, virgül ve süslü parantezlere dikkat et
+    8. Her kısım için start ve end değerleri sayı olmalı
+    9. Her kısım için title ve description string olmalı
+    10. Boş array döndürme, en az bir kısım belirt
+    11. start değeri her zaman end değerinden küçük olmalı
+    12. Tüm süreler video süresi ({duration} saniye) içinde olmalı
+    13. Her kısım için başlık ve açıklama altyazı metninden alınmalı
+    14. Kısımları sıralı seçme, en ilgi çekici ve viral olabilecek kısımları seç
+    15. Her kısım için başlık, o kısımdaki zaman aralığındaki içerikle tamamen ilgili olmalı
+    16. Konu bütünlüğü olan kısımlar seç, yarım kalmış cümleler olmasın
+    17. Viral potansiyeli yüksek kısımlar: şok edici bilgiler, komik anlar, önemli açıklamalar, ilginç hikayeler
+    18. Zaman damgalarını doğru kullan! [başlangıçsaniye-bitişsaniye] formatındaki zamanları start ve end değerleri olarak kullan
+    19. Her kısım için başlık, o kısımdaki zaman aralığındaki içerikle tamamen ilgili olmalı
+    20. Zaman damgalarını mutlaka kullan! Tahmin etme, verilen zamanları kullan!
 
-    Altyazı:
+    Altyazı (zaman damgaları ile):
     {text}
     """
     
@@ -514,7 +540,7 @@ def analyze_content(text, duration):
             response = client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "Sen bir video içerik analisti ve başlık uzmanısın. Verilen metni analiz edip en ilgi çekici kısımları bulacak ve her kısım için içerikle tamamen ilgili, özgün başlıklar oluşturacaksın. Başlıklar ve açıklamalar Türkçe olmalı ve altyazı metninden alınmalı. Yanıtını KESİNLİKLE JSON array formatında ver, başka hiçbir açıklama ekleme. Boş array döndürme, en az bir kısım belirt."},
+                    {"role": "system", "content": "Sen bir video içerik analisti ve başlık uzmanısın. Verilen Whisper transkriptini analiz edip en ilgi çekici kısımları bulacak ve her kısım için içerikle tamamen ilgili, özgün başlıklar oluşturacaksın. Kısımları eşit bölme, içeriğin doğal akışına göre viral potansiyeli yüksek kısımları seç. Her kısım 15-120 saniye arasında olmalı. Başlıklar ve açıklamalar Türkçe olmalı ve altyazı metninden alınmalı. ZAMAN DAMGALARINI MUTLAKA KULLAN! Verilen [başlangıçsaniye-bitişsaniye] formatındaki zamanları start ve end değerleri olarak kullan. Tahmin etme, verilen zamanları kullan! Yanıtını KESİNLİKLE JSON array formatında ver, başka hiçbir açıklama ekleme. Boş array döndürme, en az bir kısım belirt."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
@@ -535,30 +561,18 @@ def analyze_content(text, duration):
             try:
                 result = json.loads(content)
                 if not result or not isinstance(result, list):
-                    print("Uyarı: ChatGPT geçersiz bir JSON array döndürdü, varsayılan yanıt kullanılıyor.")
-                    return [{
-                        "start_time": 0,
-                        "end_time": min(30, duration),
-                        "title": "Video Başlangıcı",
-                        "reason": "Video içeriğinin başlangıç kısmı",
-                        "speaker_detected": False,
-                        "speaker_time": None,
-                        "context": "Video içeriğinin başlangıç kısmı",
-                        "sentence_start": 0
-                    }]
+                    print("Uyarı: ChatGPT geçersiz bir JSON array döndürdü, Whisper metnini tekrar analiz ediyor...")
+                    if attempt < max_retries - 1:
+                        continue
+                    print("Tüm denemeler başarısız oldu. Whisper metnini kullanarak basit analiz yapılıyor...")
+                    return analyze_content_simple(text, duration, srt_path)
                     
                 if len(result) == 0:
-                    print("Uyarı: ChatGPT boş bir liste döndürdü, varsayılan yanıt kullanılıyor.")
-                    return [{
-                        "start_time": 0,
-                        "end_time": min(30, duration),
-                        "title": "Video Başlangıcı",
-                        "reason": "Video içeriğinin başlangıç kısmı",
-                        "speaker_detected": False,
-                        "speaker_time": None,
-                        "context": "Video içeriğinin başlangıç kısmı",
-                        "sentence_start": 0
-                    }]
+                    print("Uyarı: ChatGPT boş bir liste döndürdü, Whisper metnini tekrar analiz ediyor...")
+                    if attempt < max_retries - 1:
+                        continue
+                    print("Tüm denemeler başarısız oldu. Whisper metnini kullanarak basit analiz yapılıyor...")
+                    return analyze_content_simple(text, duration, srt_path)
                     
                 # Her kısmın formatını kontrol et
                 for part in result:
@@ -574,6 +588,16 @@ def analyze_content(text, duration):
                         raise Exception("start değeri end değerinden küçük olmalı!")
                     if part['start'] < 0 or part['end'] > duration:
                         raise Exception(f"Tüm süreler 0 ile {duration} saniye arasında olmalı!")
+                    
+                    # Süre kontrolü (15-120 saniye)
+                    part_duration = part['end'] - part['start']
+                    if part_duration < 15:
+                        print(f"Uyarı: Kısım çok kısa ({part_duration} saniye), 15 saniyeye çıkarılıyor...")
+                        part['end'] = part['start'] + 15
+                    elif part_duration > 120:
+                        print(f"Uyarı: Kısım çok uzun ({part_duration} saniye), 120 saniyeye kısaltılıyor...")
+                        part['end'] = part['start'] + 120
+                    
                     if len(part['title']) > 50:
                         part['title'] = part['title'][:47] + "..."
                     if len(part['description']) > 100:
@@ -604,17 +628,8 @@ def analyze_content(text, duration):
                 if attempt < max_retries - 1:
                     print(f"Yeniden deneniyor... (Deneme {attempt + 2}/{max_retries})")
                     continue
-                print("Uyarı: JSON ayrıştırma hatası, varsayılan yanıt kullanılıyor.")
-                return [{
-                    "start_time": 0,
-                    "end_time": min(30, duration),
-                    "title": "Video Başlangıcı",
-                    "reason": "Video içeriğinin başlangıç kısmı",
-                    "speaker_detected": False,
-                    "speaker_time": None,
-                    "context": "Video içeriğinin başlangıç kısmı",
-                    "sentence_start": 0
-                }]
+                print("JSON ayrıştırma hatası, Whisper metnini kullanarak basit analiz yapılıyor...")
+                return analyze_content_simple(text, duration, srt_path)
                 
         except Exception as e:
             print(f"Beklenmeyen hata: {str(e)}")
@@ -624,17 +639,138 @@ def analyze_content(text, duration):
             if attempt < max_retries - 1:
                 print(f"Yeniden deneniyor... (Deneme {attempt + 2}/{max_retries})")
                 continue
-            print("Uyarı: Beklenmeyen hata, varsayılan yanıt kullanılıyor.")
-            return [{
-                "start_time": 0,
-                "end_time": min(30, duration),
-                "title": "Video Başlangıcı",
-                "reason": "Video içeriğinin başlangıç kısmı",
+            print("Beklenmeyen hata, Whisper metnini kullanarak basit analiz yapılıyor...")
+            return analyze_content_simple(text, duration, srt_path)
+
+def analyze_content_simple(text, duration, srt_path=None):
+    """Whisper metnini kullanarak basit viral kısım analizi yapar"""
+    print("\nBasit analiz yapılıyor...")
+    
+    # Eğer SRT dosyası varsa, zaman damgalarını kullan
+    if srt_path and os.path.exists(srt_path):
+        try:
+            print("SRT dosyasından zaman damgaları alınıyor...")
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                subs = list(srt.parse(f.read()))
+            
+            viral_parts = []
+            for i, sub in enumerate(subs):
+                if len(sub.content) < 20:  # Çok kısa altyazıları atla
+                    continue
+                
+                start_time = sub.start.total_seconds()
+                end_time = sub.end.total_seconds()
+                
+                # Viral potansiyeli yüksek altyazıları seç
+                viral_keywords = ['ama', 'fakat', 'ancak', 'çünkü', 'bu yüzden', 'sonuç', 'açıklama', 
+                                 'komik', 'ilginç', 'şok', 'inanılmaz', 'önemli', 'dikkat', 'uyarı',
+                                 'tavsiye', 'öneri', 'ipucu', 'trick', 'hack', 'yöntem', 'teknik']
+                
+                is_viral = any(keyword in sub.content.lower() for keyword in viral_keywords)
+                is_long_enough = len(sub.content) > 30
+                
+                if is_viral or is_long_enough:
+                    # Başlık oluştur
+                    title = sub.content[:50].strip()
+                    if len(title) > 50:
+                        title = title[:47] + "..."
+                    
+                    viral_parts.append({
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "title": title,
+                        "reason": sub.content[:100] + "..." if len(sub.content) > 100 else sub.content,
+                        "speaker_detected": False,
+                        "speaker_time": None,
+                        "context": sub.content,
+                        "sentence_start": start_time
+                    })
+                
+                # Maksimum 5 viral kısım bul
+                if len(viral_parts) >= 5:
+                    break
+            
+            if viral_parts:
+                print(f"SRT tabanlı basit analiz tamamlandı: {len(viral_parts)} viral kısım bulundu")
+                return viral_parts
+                
+        except Exception as e:
+            print(f"SRT dosyası okuma hatası: {str(e)}")
+    
+    # Eğer SRT yoksa veya hata oluştuysa, eski yöntemi kullan
+    # Metni cümlelere böl
+    sentences = text.split('.')
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    if not sentences:
+        print("Cümle bulunamadı!")
+        return []
+    
+    # Her cümle için yaklaşık süre hesapla (ortalama konuşma hızı)
+    avg_words_per_second = 2.5  # Ortalama konuşma hızı
+    total_words = len(text.split())
+    estimated_duration_per_sentence = (duration / len(sentences)) if sentences else 30
+    
+    viral_parts = []
+    current_start = 0
+    
+    for i, sentence in enumerate(sentences):
+        if len(sentence) < 20:  # Çok kısa cümleleri atla
+            continue
+            
+        # Cümle uzunluğuna göre süre hesapla
+        words_in_sentence = len(sentence.split())
+        sentence_duration = max(15, min(60, words_in_sentence / avg_words_per_second))
+        
+        end_time = min(current_start + sentence_duration, duration)
+        
+        # Viral potansiyeli yüksek cümleleri seç
+        viral_keywords = ['ama', 'fakat', 'ancak', 'çünkü', 'bu yüzden', 'sonuç', 'açıklama', 
+                         'komik', 'ilginç', 'şok', 'inanılmaz', 'önemli', 'dikkat', 'uyarı',
+                         'tavsiye', 'öneri', 'ipucu', 'trick', 'hack', 'yöntem', 'teknik']
+        
+        is_viral = any(keyword in sentence.lower() for keyword in viral_keywords)
+        is_long_enough = len(sentence) > 30
+        
+        if is_viral or is_long_enough:
+            # Başlık oluştur
+            title = sentence[:50].strip()
+            if len(title) > 50:
+                title = title[:47] + "..."
+            
+            viral_parts.append({
+                "start_time": current_start,
+                "end_time": end_time,
+                "title": title,
+                "reason": sentence[:100] + "..." if len(sentence) > 100 else sentence,
                 "speaker_detected": False,
                 "speaker_time": None,
-                "context": "Video içeriğinin başlangıç kısmı",
-                "sentence_start": 0
-            }]
+                "context": sentence,
+                "sentence_start": current_start
+            })
+        
+        current_start = end_time
+        
+        # Maksimum 5 viral kısım bul
+        if len(viral_parts) >= 5:
+            break
+    
+    if not viral_parts:
+        # Hiç viral kısım bulunamadıysa, ilk cümleyi al
+        first_sentence = sentences[0] if sentences else "Video içeriği"
+        viral_parts.append({
+            "start_time": 0,
+            "end_time": min(60, duration),
+            "title": first_sentence[:50],
+            "reason": first_sentence[:100] + "..." if len(first_sentence) > 100 else first_sentence,
+            "speaker_detected": False,
+            "speaker_time": None,
+            "context": first_sentence,
+            "sentence_start": 0
+        })
+    
+    print(f"Basit analiz tamamlandı: {len(viral_parts)} viral kısım bulundu")
+    return viral_parts
 
 def get_video_thumbnail(video_path, time):
     """Belirli bir zamandaki video karesini alır ve küçültür"""
@@ -937,22 +1073,20 @@ def create_shorts(video_path, viral_parts, srt_path=None):
         # Video uzantısını kontrol et ve gerekirse değiştir
         video_path_without_ext = os.path.splitext(video_path)[0]
         if not os.path.exists(video_path):
-            # WEBM uzantısını dene
-            webm_path = video_path_without_ext + '.webm'
-            if os.path.exists(webm_path):
-                video_path = webm_path
-            else:
-                # MP4 uzantısını dene
-                mp4_path = video_path_without_ext + '.mp4'
-                if os.path.exists(mp4_path):
-                    video_path = mp4_path
-                else:
-                    # MOV uzantısını dene
-                    mov_path = video_path_without_ext + '.mov'
-                    if os.path.exists(mov_path):
-                        video_path = mov_path
-                    else:
-                        raise FileNotFoundError(f"Video dosyası bulunamadı: {video_path}")
+            # Yaygın video formatlarını dene
+            common_extensions = ['.mp4', '.mkv', '.webm', '.avi', '.mov']
+            video_found = False
+            
+            for ext in common_extensions:
+                test_path = video_path_without_ext + ext
+                if os.path.exists(test_path):
+                    video_path = test_path
+                    video_found = True
+                    print(f"Video dosyası bulundu: {video_path}")
+                    break
+            
+            if not video_found:
+                raise FileNotFoundError(f"Video dosyası bulunamadı. Aranan formatlar: {', '.join(common_extensions)}")
 
         print(f"\nVideo dosyası bulundu: {video_path}")
         video = VideoFileClip(video_path)
@@ -1097,81 +1231,83 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 # Tüm klipleri birleştir
                 final_clips_list = [bg_combined, clip] + overlay_clips_for_this_short
 
-                # Altyazıları ekle (eğer srt_path varsa)
+                # Altyazıları ekle (eğer srt_path varsa) - OPTİMİZE EDİLMİŞ VERSİYON
                 if srt_path and os.path.exists(srt_path):
                     print(f"\n  Altyazılar {srt_path} dosyasından alınıyor...")
-                    with open(srt_path, 'r', encoding='utf-8') as f:
-                        full_subs = list(srt.parse(f.read()))
+                    
+                    try:
+                        with open(srt_path, 'r', encoding='utf-8') as f:
+                            full_subs = list(srt.parse(f.read()))
 
-                    # Sadece mevcut klibin zaman aralığına düşen altyazıları filtrele
-                    relevant_subs = [
-                        sub for sub in full_subs
-                        if not (sub.end.total_seconds() < start_time or sub.start.total_seconds() > end_time)
-                    ]
-                    print(f"  Klip {i+1}/{len(viral_parts)} için {len(relevant_subs)} altyazı segmenti bulundu.")
-                    print(f"  Video: {video_id}")
-                    print(f"  Başlık: {title_full}")
-                    print(f"  Süre: {clip_duration:.2f} saniye")
+                        # Sadece mevcut klibin zaman aralığına düşen altyazıları filtrele
+                        relevant_subs = [
+                            sub for sub in full_subs
+                            if not (sub.end.total_seconds() < start_time or sub.start.total_seconds() > end_time)
+                        ]
+                        
+                        print(f"  Klip {i+1}/{len(viral_parts)} için {len(relevant_subs)} altyazı segmenti işlenecek.")
+                        print(f"  Video: {video_id}")
+                        print(f"  Başlık: {title_full}")
+                        print(f"  Süre: {clip_duration:.2f} saniye")
 
-                    for sub_idx, sub in enumerate(relevant_subs):
-                        try:
-                            sub_start = sub.start.total_seconds() - start_time
-                            sub_end = sub.end.total_seconds() - start_time
-                            
-                            if sub_end <= sub_start:
+                        subtitle_clips_added = 0
+                        max_processing_time = 120  # 2 dakika maksimum
+                        start_processing_time = time.time()
+                        
+                        for sub_idx, sub in enumerate(relevant_subs):
+                            try:
+                                # Timeout kontrolü
+                                if time.time() - start_processing_time > max_processing_time:
+                                    print(f"  ⚠️ İşleme zaman aşımı! {max_processing_time} saniye geçti.")
+                                    print(f"  {subtitle_clips_added} altyazı başarıyla eklendi.")
+                                    break
+                                
+                                # İlerleme göster
+                                if sub_idx % 3 == 0:
+                                    progress = (sub_idx / len(relevant_subs)) * 100
+                                    print(f"  Altyazı işleniyor: %{progress:.1f} ({sub_idx}/{len(relevant_subs)}) - {subtitle_clips_added} eklendi")
+                                
+                                sub_start = sub.start.total_seconds() - start_time
+                                sub_end = sub.end.total_seconds() - start_time
+                                
+                                if sub_end <= sub_start or sub_end - sub_start < 0.5:
+                                    continue
+
+                                # Basit ve hızlı altyazı oluştur
+                                sub_content = sub.content[:80]  # Maksimum 80 karakter
+                                
+                                sub_txt_clip = TextClip(
+                                    sub_content,
+                                    fontsize=55,
+                                    color='white',
+                                    font='Arial-Bold',
+                                    method='caption',
+                                    size=(target_w - 80, None)
+                                )
+                                sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
+                                sub_txt_clip = sub_txt_clip.set_start(sub_start)
+                                
+                                # Basit arka plan
+                                sub_bg = ColorClip(size=(target_w, 70), color=(0, 0, 0, 150))
+                                sub_bg = sub_bg.set_duration(sub_end - sub_start)
+                                sub_bg = sub_bg.set_start(sub_start)
+                                sub_bg = sub_bg.set_position(('center', target_h - 350 - 70))
+                                
+                                sub_txt_clip = sub_txt_clip.set_position(('center', target_h - 350 - 70 + 5))
+
+                                final_clips_list.append(sub_bg)
+                                final_clips_list.append(sub_txt_clip)
+                                subtitle_clips_added += 1
+                                
+                            except Exception as e:
+                                print(f"  Altyazı segmenti işlenirken hata: {str(e)}")
                                 continue
-
-                            # Altyazı metni - kalın font ile
-                            sub_txt_clip = TextClip(
-                                sub.content,
-                                fontsize=70,
-                                color='white',
-                                font='Arial-Bold',
-                                method='caption',
-                                size=(target_w - 40, None)
-                            )
-                            sub_txt_clip = sub_txt_clip.set_duration(sub_end - sub_start)
-                            sub_txt_clip = sub_txt_clip.set_start(sub_start)
-                            
-                            # Altyazı için arka plan - metin yüksekliğine göre ayarla
-                            vertical_padding_sub = 20 # Metin etrafında dikey boşluk
-                            sub_bg_height = sub_txt_clip.h + (2 * vertical_padding_sub)
-                            
-                            # Minimum yüksekliği koru
-                            min_sub_bg_height = 80 # Çok kısa metinler için minimum yükseklik
-                            if sub_bg_height < min_sub_bg_height:
-                                sub_bg_height = min_sub_bg_height
-                            
-                            sub_bg = ColorClip(size=(target_w, sub_bg_height), color=(0, 0, 0, 180))
-                            sub_bg = sub_bg.set_duration(sub_end - sub_start)
-                            sub_bg = sub_bg.set_start(sub_start)
-                            
-                            # Altyazı bloğunu (arka plan + metin) alt kısımda konumlandır
-                            # Ekranın altından 350 piksel yukarıda başlayacak şekilde ayarlama
-                            subtitle_block_y_position_top = (target_h - 350) - sub_bg_height
-                            sub_bg = sub_bg.set_position(('center', subtitle_block_y_position_top))
-                            
-                            # Metin klibini arka plan içinde dikey olarak ortala
-                            text_y_position = subtitle_block_y_position_top + (sub_bg_height - sub_txt_clip.h) / 2
-                            sub_txt_clip = sub_txt_clip.set_position(('center', text_y_position))
-                            
-                            # Animasyon ekle
-                            fade_duration = 0.2
-                            sub_bg = sub_bg.crossfadein(fade_duration).crossfadeout(fade_duration)
-                            sub_txt_clip = sub_txt_clip.crossfadein(fade_duration).crossfadeout(fade_duration)
-
-                            final_clips_list.append(sub_bg)
-                            final_clips_list.append(sub_txt_clip)
-                            
-                            # İlerleme göster
-                            progress = (sub_idx + 1) / len(relevant_subs) * 100
-                            print(f"\r  Altyazı işleniyor: %{progress:.1f} ({sub_idx + 1}/{len(relevant_subs)})", end="")
-                            
-                        except Exception as e:
-                            print(f"\n  Altyazı segmenti işlenirken hata: {str(e)}")
-                            continue
-                            
-                    print("\n  ✓ Altyazılar eklendi!")
+                        
+                        print(f"\n  ✓ {subtitle_clips_added} altyazı eklendi!")
+                        
+                    except Exception as e:
+                        print(f"  ⚠️ Altyazı işleme sırasında hata oluştu: {str(e)}")
+                        print("  Altyazısız devam ediliyor...")
 
                 # CompositeVideoClip oluştur
                 final_clip = CompositeVideoClip(
@@ -1180,13 +1316,15 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                 ).set_duration(clip_duration)
                 
                 # Klibi kaydet
-                output_path = os.path.join(output_dir, f'{video_id}_{safe_title}_{timestamp}.mov')
+                output_path = os.path.join(output_dir, f'{video_id}_{safe_title}_{timestamp}.mp4')
                 print(f"\nKısa video kaydediliyor: {output_path}")
+                print("Bu işlem birkaç dakika sürebilir...")
                 
                 # Önce NVIDIA NVENC ile kaydetmeyi dene
                 try:
+                    print("NVIDIA NVENC ile kaydediliyor...")
                     final_clip.write_videofile(
-                        output_path.replace(".mov", "_nvenc.mov"),
+                        output_path.replace(".mp4", "_nvenc.mp4"),
                         codec='h264_nvenc',
                         bitrate='4000k',
                         audio_codec='aac',
@@ -1201,33 +1339,43 @@ def create_shorts(video_path, viral_parts, srt_path=None):
                             '-color_primaries', 'bt709',
                             '-color_trc', 'bt709',
                             '-color_range', 'tv'
-                        ]
+                        ],
+                        verbose=True,  # İlerleme göster
+                        logger=None  # Logger'ı kapat
                     )
-                    print(f"✓ Kısa video (NVIDIA NVENC ile) kaydedildi: {output_path.replace('.mov', '_nvenc.mov')}")
+                    print(f"\n✓ Kısa video (NVIDIA NVENC ile) kaydedildi: {output_path.replace('.mp4', '_nvenc.mp4')}")
                 except Exception as e:
-                    print(f"Uyarı: NVIDIA NVENC ile video kaydedilirken hata oluştu: {str(e)}")
+                    print(f"\nUyarı: NVIDIA NVENC ile video kaydedilirken hata oluştu: {str(e)}")
                     print("CPU tabanlı libx264 kodlayıcısına geri dönülüyor...")
                     # Hata durumunda CPU tabanlı libx264 kodlayıcısı ile kaydet
-                    final_clip.write_videofile(
-                        output_path,
-                        codec='libx264',
-                        bitrate='4000k',
-                        audio_codec='aac',
-                        audio_bitrate='192k',
-                        preset='medium',
-                        threads=4,
-                        ffmpeg_params=[
-                            '-crf', '23',
-                            '-movflags', '+faststart',
-                            '-pix_fmt', 'yuv420p',
-                            '-vf', 'format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2',
-                            '-colorspace', 'bt709',
-                            '-color_primaries', 'bt709',
-                            '-color_trc', 'bt709',
-                            '-color_range', 'tv'
-                        ]
-                    )
-                    print(f"✓ Kısa video (libx264 ile) kaydedildi: {output_path}")
+                    try:
+                        print("libx264 ile kaydediliyor...")
+                        final_clip.write_videofile(
+                            output_path,
+                            codec='libx264',
+                            bitrate='4000k',
+                            audio_codec='aac',
+                            audio_bitrate='192k',
+                            preset='medium',
+                            threads=4,
+                            ffmpeg_params=[
+                                '-crf', '23',
+                                '-movflags', '+faststart',
+                                '-pix_fmt', 'yuv420p',
+                                '-vf', 'format=yuv420p,pad=ceil(iw/2)*2:ceil(ih/2)*2',
+                                '-colorspace', 'bt709',
+                                '-color_primaries', 'bt709',
+                                '-color_trc', 'bt709',
+                                '-color_range', 'tv'
+                            ],
+                            verbose=True,  # İlerleme göster
+                            logger=None  # Logger'ı kapat
+                        )
+                        print(f"\n✓ Kısa video (libx264 ile) kaydedildi: {output_path}")
+                    except Exception as e2:
+                        print(f"\n❌ Video kaydetme tamamen başarısız: {str(e2)}")
+                        print("Bir sonraki viral kısma geçiliyor...")
+                        continue
 
             except Exception as e:
                 print(f"\nKısa video oluşturulurken hata: {str(e)}")
@@ -1494,7 +1642,7 @@ def process_local_video(video_path):
         # Bu kısım ana fonksiyonda tekrar düzenlenecek.
         print("\n3. İçerik analiz ediliyor...")
         print("OpenAI API'ye istek gönderiliyor...")
-        viral_parts = analyze_content(subtitles_text, duration) # subtitles_text parametre olarak gelmeli
+        viral_parts = analyze_content(subtitles_text, duration, srt_path) # subtitles_text parametre olarak gelmeli
         print(f"✓ İçerik analiz edildi! {len(viral_parts)} viral kısım bulundu.")
         
         # Shorts videoları oluştur
@@ -1595,7 +1743,7 @@ def main():
             # Analyze content
             print("\n3. Analyzing content...")
             print("Sending request to OpenAI API...")
-            viral_parts = analyze_content(subtitles_text, info.get('duration', 0))
+            viral_parts = analyze_content(subtitles_text, info.get('duration', 0), srt_path)
             print(f"✓ Content analyzed! Found {len(viral_parts)} viral segments.")
             
             # Create short videos
